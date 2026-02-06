@@ -5,8 +5,55 @@
 import { supabase } from '../lib/supabase';
 
 const STORAGE_KEY = 'runplanner_state';
+const RETRY_QUEUE_KEY = 'runplanner_retry_queue';
 
 let debounceTimer = null;
+
+// ── Offline retry queue ──────────────────────────────────────────────
+// Saves failed writes and replays them when back online.
+
+function getRetryQueue() {
+  try {
+    return JSON.parse(localStorage.getItem(RETRY_QUEUE_KEY) || '[]');
+  } catch { return []; }
+}
+
+function saveRetryQueue(queue) {
+  try {
+    localStorage.setItem(RETRY_QUEUE_KEY, JSON.stringify(queue.slice(-20))); // max 20 items
+  } catch { /* ignore */ }
+}
+
+function enqueueRetry(table, method, args) {
+  const queue = getRetryQueue();
+  queue.push({ table, method, args, ts: Date.now() });
+  saveRetryQueue(queue);
+}
+
+async function flushRetryQueue() {
+  if (!supabase) return;
+  const queue = getRetryQueue();
+  if (queue.length === 0) return;
+
+  const remaining = [];
+  for (const item of queue) {
+    try {
+      if (item.method === 'upsert') {
+        const { error } = await supabase.from(item.table).upsert(item.args.row, item.args.opts);
+        if (error) { remaining.push(item); continue; }
+      } else if (item.method === 'update') {
+        const { error } = await supabase.from(item.table).update(item.args.data).eq('id', item.args.id);
+        if (error) { remaining.push(item); continue; }
+      }
+    } catch { remaining.push(item); }
+  }
+  saveRetryQueue(remaining);
+}
+
+// Flush queue when coming back online
+if (typeof window !== 'undefined') {
+  window.addEventListener('online', () => { flushRetryQueue(); });
+}
 
 export const storage = {
   // ══════════════════════════════════════════════════════════════════
@@ -122,10 +169,24 @@ export const storage = {
         .upsert(row, { onConflict: 'user_id' })
         .select()
         .single();
-      if (error) console.warn('[storage] saveProfile error:', error.message);
+      if (error) {
+        console.warn('[storage] saveProfile error:', error.message);
+        enqueueRetry('profiles', 'upsert', { row, opts: { onConflict: 'user_id' } });
+      }
       return result;
     } catch (err) {
       console.warn('[storage] saveProfile error:', err.message);
+      enqueueRetry('profiles', 'upsert', { row: {
+        user_id: userId,
+        first_name: data.firstName || null, gender: data.gender || null,
+        birth_date: data.birthDate || null, ref_distance: data.refDistance || null,
+        ref_time: data.refTime || null,
+        year_km: data.yearKm ? parseFloat(data.yearKm) : null,
+        avg_week_km: data.avgWeekKm ? parseFloat(data.avgWeekKm) : null,
+        last_week_km: data.lastWeekKm ? parseFloat(data.lastWeekKm) : null,
+        sessions_per_week: data.sessionsPerWeek || 4,
+        training_days: data.trainingDays || ['Mar', 'Jeu', 'Sam'],
+      }, opts: { onConflict: 'user_id' } });
       return null;
     }
   },
@@ -197,8 +258,14 @@ export const storage = {
         .from('plans')
         .update(updates)
         .eq('id', planId);
-      if (error) console.warn('[storage] updatePlan error:', error.message);
-    } catch { /* ignore */ }
+      if (error) {
+        console.warn('[storage] updatePlan error:', error.message);
+        enqueueRetry('plans', 'update', { data: updates, id: planId });
+      }
+    } catch (err) {
+      console.warn('[storage] updatePlan error:', err.message);
+      enqueueRetry('plans', 'update', { data: updates, id: planId });
+    }
   },
 
   // ══════════════════════════════════════════════════════════════════

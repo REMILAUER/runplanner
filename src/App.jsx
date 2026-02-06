@@ -44,10 +44,11 @@ export default function App() {
   const [objectives, setObjectives] = useState(localData?.objectives || []);
   const [paces, setPaces] = useState(localData?.paces || null);
   const [plan, setPlan] = useState(localData?.plan || null);
-  const [weeklyPlan, setWeeklyPlan] = useState(localData?.weeklyPlan || null);
+  const [weeklyPlan, setWeeklyPlan] = useState(null);
   const [activePlanId, setActivePlanId] = useState(localData?.activePlanId || null);
   const [dataLoading, setDataLoading] = useState(false);
   const [chatOpen, setChatOpen] = useState(false);
+  const [saveStatus, setSaveStatus] = useState(null); // null | 'saving' | 'saved' | 'error'
 
   // Memoize coach context for the AI chat
   const coachContext = useMemo(() => {
@@ -108,12 +109,16 @@ export default function App() {
           }));
           setPlan({ cycles, warnings: planData.warnings || [] });
 
-          // Load weekly plan from DB (pre-computed sessions)
+          // Load weekly plan from DB (all cycles)
           if (planData.cycles && planData.cycles.length > 0) {
-            const dbWeeks = await storage.loadWeeksForCycle(planData.cycles[0].id);
-            if (cancelled) return;
-            if (dbWeeks && dbWeeks.length > 0) {
-              setWeeklyPlan(hydrateWeeksFromDb(dbWeeks));
+            const allDbWeeks = [];
+            for (const cycle of planData.cycles) {
+              const cycleWeeks = await storage.loadWeeksForCycle(cycle.id);
+              if (cancelled) return;
+              if (cycleWeeks) allDbWeeks.push(...cycleWeeks);
+            }
+            if (allDbWeeks.length > 0) {
+              setWeeklyPlan(hydrateWeeksFromDb(allDbWeeks));
             }
           }
 
@@ -169,23 +174,25 @@ export default function App() {
     return () => { cancelled = true; };
   }, [userId]);
 
-  // Persist to localStorage on every state change (UI cache)
+  // Persist to localStorage on every state change (lightweight — no weeklyPlan)
   useEffect(() => {
     storage.saveLocal({
       phase, step, planStep, profile, history, availability,
-      objectives, paces, plan, weeklyPlan, activePlanId,
+      objectives, paces, plan, activePlanId,
     });
-  }, [phase, step, planStep, profile, history, availability, objectives, paces, plan, weeklyPlan, activePlanId]);
+  }, [phase, step, planStep, profile, history, availability, objectives, paces, plan, activePlanId]);
 
-  // Also keep legacy blob in sync during transition
+  // Persist paces to normalized DB when they change
+  const pacesInitialized = useRef(false);
   useEffect(() => {
-    if (userId) {
-      storage.saveLegacyBlob(userId, {
-        phase, step, planStep, profile, history, availability,
-        objectives, paces, plan,
-      });
+    if (!pacesInitialized.current) { pacesInitialized.current = true; return; }
+    if (supabaseConfigured && userId && activePlanId && paces) {
+      setSaveStatus('saving');
+      storage.updatePlan(activePlanId, { paces })
+        .then(() => { setSaveStatus('saved'); setTimeout(() => setSaveStatus(null), 2000); })
+        .catch(() => { setSaveStatus('error'); setTimeout(() => setSaveStatus(null), 3000); });
     }
-  }, [phase, step, planStep, profile, history, availability, objectives, paces, plan, userId]);
+  }, [paces, activePlanId, userId, supabaseConfigured]);
 
   // ── Auth gate ──
   if (supabaseConfigured && authLoading) {
@@ -255,6 +262,7 @@ export default function App() {
 
     // Persist to normalized DB (async, non-blocking for UI)
     if (supabaseConfigured && userId) {
+      setSaveStatus('saving');
       try {
         // Save profile (merged)
         await storage.saveProfile(userId, {
@@ -299,8 +307,12 @@ export default function App() {
             await storage.saveGeneratedPlan(cycleIds[0], dbWeeks);
           }
         }
+        setSaveStatus('saved');
+        setTimeout(() => setSaveStatus(null), 2000);
       } catch (err) {
         console.warn('[App] DB persist error (non-blocking):', err.message);
+        setSaveStatus('error');
+        setTimeout(() => setSaveStatus(null), 3000);
       }
     }
   };
@@ -411,6 +423,20 @@ export default function App() {
           coachContext={coachContext}
           accessToken={session?.access_token}
         />
+      )}
+      {/* Save status indicator */}
+      {saveStatus && (
+        <div style={{
+          position: 'fixed', bottom: 60, left: '50%', transform: 'translateX(-50%)',
+          padding: '6px 14px', borderRadius: 2, fontSize: 11, fontFamily: FONT, zIndex: 100,
+          background: saveStatus === 'error' ? '#c00' : '#1a1a1a',
+          color: '#fff', opacity: saveStatus === 'saving' ? 0.7 : 1,
+          transition: 'opacity 0.2s',
+        }}>
+          {saveStatus === 'saving' && 'Sauvegarde...'}
+          {saveStatus === 'saved' && 'Sauvegardé'}
+          {saveStatus === 'error' && 'Erreur de sauvegarde'}
+        </div>
       )}
       <div style={s.nav}>
         <button style={s.btn} onClick={handleBackToSettings}>Paramètres</button>
