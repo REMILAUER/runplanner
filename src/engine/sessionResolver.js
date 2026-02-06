@@ -235,6 +235,146 @@ export function buildSessionFromLibrary(entry, targetDistanceKm, paces, sessionT
     ? `${Math.floor(totalRounded / 60)}h${String(totalRounded % 60).padStart(2, "0")}`
     : `${totalRounded}min`;
 
+  // ── Build structured steps for DB persistence ──
+  const _dbSteps = [];
+  let stepOrder = 0;
+
+  // Warmup step
+  if (hasWarmup) {
+    _dbSteps.push({
+      sortOrder: stepOrder++,
+      stepType: "warmup",
+      durationSec: warmupMin * 60,
+      paceZone: "Easy",
+      paceMinSecKm: paces?.Easy?.fast || null,
+      paceMaxSecKm: paces?.Easy?.slow || null,
+      label: warmup.description,
+      description: `${warmup.duration} @ ${warmup.pace}`,
+    });
+  }
+
+  // Main steps — from library entry structure
+  const mainPaceData = paces?.[mainPaceZone];
+  const easyPaceData = paces?.Easy;
+  const s = entry.structure;
+
+  if (s) {
+    // Time-based intervals (30/30 etc.)
+    if (s.type === "time_based" && s.reps && s.work_sec) {
+      _dbSteps.push({
+        sortOrder: stepOrder++,
+        stepType: "main",
+        reps: s.reps,
+        durationSec: s.work_sec,
+        paceZone: mainPaceZone,
+        paceMinSecKm: mainPaceData?.fast || null,
+        paceMaxSecKm: mainPaceData?.slow || null,
+        recoveryDurationSec: s.recovery_sec || s.work_sec,
+        recoveryType: s.recovery_type || "jog",
+        label: entry.description,
+        description: entry.recovery_desc || null,
+      });
+    }
+    // Sets format (2 × (6 × 300m))
+    else if (s.sets && s.reps_per_set) {
+      _dbSteps.push({
+        sortOrder: stepOrder++,
+        stepType: "main",
+        reps: s.reps_per_set,
+        sets: s.sets,
+        durationSec: s.duration_sec || null,
+        distanceM: s.distance_m || null,
+        paceZone: mainPaceZone,
+        paceMinSecKm: mainPaceData?.fast || null,
+        paceMaxSecKm: mainPaceData?.slow || null,
+        recoveryDurationSec: s.recovery_intra_sec || 60,
+        recoveryType: s.recovery_type || "jog",
+        recoveryBetweenSetsSec: s.recovery_inter_sec || 180,
+        label: entry.description,
+        description: entry.recovery_desc || null,
+      });
+    }
+    // Pyramid
+    else if ((s.type === "pyramid" && s.segments) || s.segments_sec) {
+      const segments = s.segments || s.segments_sec;
+      _dbSteps.push({
+        sortOrder: stepOrder++,
+        stepType: "main",
+        reps: segments.length,
+        durationSec: s.segments_sec ? s.segments_sec.reduce((a, b) => a + b, 0) : null,
+        paceZone: mainPaceZone,
+        paceMinSecKm: mainPaceData?.fast || null,
+        paceMaxSecKm: mainPaceData?.slow || null,
+        recoveryDurationSec: s.recovery_sec || 120,
+        recoveryType: s.recovery_type || "jog",
+        label: entry.description,
+        description: `Pyramid: ${segments.join('-')}${s.segments ? 'm' : 's'}. ${entry.recovery_desc || ''}`,
+      });
+    }
+    // Mixed format
+    else if (s.type === "mixed" && s.segments) {
+      s.segments.forEach((seg, i) => {
+        _dbSteps.push({
+          sortOrder: stepOrder++,
+          stepType: "main",
+          distanceM: seg.distance_m || null,
+          durationSec: seg.duration_sec || null,
+          paceZone: mainPaceZone,
+          paceMinSecKm: mainPaceData?.fast || null,
+          paceMaxSecKm: mainPaceData?.slow || null,
+          recoveryDurationSec: seg.recovery_sec || null,
+          recoveryType: s.recovery_type || "jog",
+          label: `Segment ${i + 1}`,
+          description: seg.description || null,
+        });
+      });
+    }
+    // Simple reps (10 × 400m, 3 × 10min, etc.)
+    else if (s.reps) {
+      _dbSteps.push({
+        sortOrder: stepOrder++,
+        stepType: "main",
+        reps: s.reps,
+        durationSec: s.duration_sec || s.work_sec || null,
+        distanceM: s.distance_m || null,
+        paceZone: mainPaceZone,
+        paceMinSecKm: mainPaceData?.fast || null,
+        paceMaxSecKm: mainPaceData?.slow || null,
+        recoveryDurationSec: s.recovery_sec || 60,
+        recoveryType: s.recovery_type || "jog",
+        label: entry.description,
+        description: entry.recovery_desc || null,
+      });
+    }
+  }
+
+  // For SL/FOOTING with multiple zones but no structured intervals
+  if (_dbSteps.filter(st => st.stepType === "main").length === 0) {
+    mainBlocks.forEach((block, i) => {
+      _dbSteps.push({
+        sortOrder: stepOrder++,
+        stepType: "main",
+        paceZone: mainPaceZone,
+        paceMinSecKm: mainPaceData?.fast || null,
+        paceMaxSecKm: mainPaceData?.slow || null,
+        label: block.description,
+        description: `${block.duration} @ ${block.pace}`,
+      });
+    });
+  }
+
+  // Cooldown step
+  _dbSteps.push({
+    sortOrder: stepOrder++,
+    stepType: "cooldown",
+    durationSec: cooldownMin * 60,
+    paceZone: "Easy",
+    paceMinSecKm: easyPaceData?.fast || null,
+    paceMaxSecKm: easyPaceData?.slow || null,
+    label: cooldown.description,
+    description: `${cooldown.duration} @ ${cooldown.pace}`,
+  });
+
   return {
     type,
     title: entry.name,
@@ -245,6 +385,10 @@ export function buildSessionFromLibrary(entry, targetDistanceKm, paces, sessionT
     cooldown,
     notes: entry.notes || "",
     coach_tips: entry.coach_tips || [],
+    _dbSteps,
+    _sourceTemplateId: entry.id || null,
+    _targetDurationMin: totalRounded,
+    _targetDistanceKm: targetDistanceKm,
   };
 }
 

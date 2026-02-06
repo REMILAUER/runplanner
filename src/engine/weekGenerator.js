@@ -537,6 +537,128 @@ export function generateWeeklyPlan(plan, availability, paces, startDate) {
   });
 }
 
+// ── DB-ready plan generation ──────────────────────────────────────────
+
+/**
+ * Build structured steps from a legacy (hardcoded/fallback) session that
+ * was NOT built from the session library. Converts warmup/main/cooldown
+ * into step objects suitable for the session_steps DB table.
+ */
+function buildStepsFromLegacy(session, paces) {
+  const steps = [];
+  let sortOrder = 0;
+  const easyPaceData = paces?.Easy;
+
+  // Map session type to primary pace zone
+  const typeToZone = {
+    VMA: "VMACourte", SEUIL: "Seuil2", TEMPO: "Tempo",
+    EF: "Easy", SL: "Easy", RECUP: "Easy",
+  };
+  const mainZone = typeToZone[session.type] || "Easy";
+  const mainPaceData = paces?.[mainZone];
+
+  // Warmup
+  if (session.warmup && session.warmup.duration !== "—") {
+    const minMatch = session.warmup.duration.match(/(\d+)/);
+    steps.push({
+      sortOrder: sortOrder++,
+      stepType: "warmup",
+      durationSec: minMatch ? parseInt(minMatch[1]) * 60 : null,
+      paceZone: "Easy",
+      paceMinSecKm: easyPaceData?.fast || null,
+      paceMaxSecKm: easyPaceData?.slow || null,
+      label: session.warmup.description || "Échauffement",
+      description: `${session.warmup.duration} @ ${session.warmup.pace}`,
+    });
+  }
+
+  // Main blocks
+  if (session.main) {
+    session.main.forEach(block => {
+      steps.push({
+        sortOrder: sortOrder++,
+        stepType: "main",
+        paceZone: mainZone,
+        paceMinSecKm: mainPaceData?.fast || null,
+        paceMaxSecKm: mainPaceData?.slow || null,
+        label: block.description,
+        description: `${block.duration} @ ${block.pace}`,
+      });
+    });
+  }
+
+  // Cooldown
+  if (session.cooldown && session.cooldown.duration !== "—") {
+    const minMatch = session.cooldown.duration.match(/(\d+)/);
+    steps.push({
+      sortOrder: sortOrder++,
+      stepType: "cooldown",
+      durationSec: minMatch ? parseInt(minMatch[1]) * 60 : null,
+      paceZone: "Easy",
+      paceMinSecKm: easyPaceData?.fast || null,
+      paceMaxSecKm: easyPaceData?.slow || null,
+      label: session.cooldown.description || "Retour au calme",
+      description: `${session.cooldown.duration} @ ${session.cooldown.pace}`,
+    });
+  }
+
+  return steps;
+}
+
+/**
+ * Generate both the UI-ready weekly plan and DB-ready data for batch insertion.
+ * Wraps generateWeeklyPlan() and transforms the output.
+ *
+ * @returns {{ weeklyPlan: Array, dbWeeks: Array }}
+ */
+export function generateAndPersistPlan(plan, availability, paces, startDate) {
+  const weeklyPlan = generateWeeklyPlan(plan, availability, paces, startDate);
+
+  const dbWeeks = weeklyPlan.map(weekData => ({
+    weekNumber: weekData.week,
+    phase: weekData.phase,
+    targetVolume: weekData.volume,
+    startDate: weekData.weekStartDate.toISOString().split('T')[0],
+    isAssimilation: weekData.isAssim,
+    sessions: weekData.sessions
+      .filter(s => !s.isRest)
+      .map((session, si) => {
+        // Parse duration to minutes
+        let durationMin = session._targetDurationMin || null;
+        if (!durationMin && session.duration) {
+          const hMatch = session.duration.match(/(\d+)h(\d+)/);
+          const mMatch = session.duration.match(/(\d+)min/);
+          const rangeMatch = session.duration.match(/(\d+)-(\d+)min/);
+          if (hMatch) durationMin = parseInt(hMatch[1]) * 60 + parseInt(hMatch[2]);
+          else if (rangeMatch) durationMin = (parseInt(rangeMatch[1]) + parseInt(rangeMatch[2])) / 2;
+          else if (mMatch) durationMin = parseInt(mMatch[1]);
+        }
+
+        // Distance (before range conversion: use low value)
+        const distKm = session._targetDistanceKm
+          || (typeof session.distance === 'number' ? session.distance : session.distance?.low)
+          || null;
+
+        return {
+          dayName: session.dayName,
+          date: session.date.toISOString().split('T')[0],
+          sortOrder: si,
+          type: session.type,
+          title: session.title,
+          sourceTemplateId: session._sourceTemplateId || null,
+          targetDurationMin: durationMin,
+          targetDistanceKm: distKm,
+          description: session.main?.map(b => b.description).join(' + ') || '',
+          notes: session.notes || null,
+          coachTips: session.coach_tips || [],
+          steps: session._dbSteps || buildStepsFromLegacy(session, paces),
+        };
+      }),
+  }));
+
+  return { weeklyPlan, dbWeeks };
+}
+
 // Format distance range for display
 export function fmtDist(d) {
   if (typeof d === "number") return `${d}`;

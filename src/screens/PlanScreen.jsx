@@ -8,12 +8,17 @@ import WeekVolumeBar from '../components/plan/WeekVolumeBar';
 import SessionDetailModal from '../components/plan/SessionDetailModal';
 import PlanOverviewChart from '../components/plan/PlanOverviewChart';
 
-export default function PlanScreen({ plan, paces, profile, availability }) {
+export default function PlanScreen({ plan, paces, profile, availability, weeklyPlan: weeklyPlanProp }) {
   const [selectedWeek, setSelectedWeek] = useState(1);
   const [selectedSession, setSelectedSession] = useState(null);
   const [isExporting, setIsExporting] = useState(false);
 
+  // Use pre-computed weeklyPlan from prop if available, otherwise compute on-the-fly (fallback)
   const weeklyPlan = useMemo(() => {
+    if (weeklyPlanProp && Array.isArray(weeklyPlanProp) && weeklyPlanProp.length > 0) {
+      return weeklyPlanProp;
+    }
+    // Fallback: compute on-the-fly (backward compat / no DB)
     const now = new Date();
     const dow = now.getDay();
     const toMon = dow === 0 ? 1 : dow === 1 ? 0 : 8 - dow;
@@ -21,7 +26,7 @@ export default function PlanScreen({ plan, paces, profile, availability }) {
     monday.setDate(monday.getDate() + toMon);
     monday.setHours(0, 0, 0, 0);
     return generateWeeklyPlan(plan, availability, paces, monday);
-  }, [plan, availability, paces]);
+  }, [weeklyPlanProp, plan, availability, paces]);
 
   const handleExportPDF = async () => {
     setIsExporting(true);
