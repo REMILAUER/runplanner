@@ -1,11 +1,15 @@
-// ── Periodization Algorithm ─────────────────────────────────────────
+// ── Periodization Algorithm V2 ──────────────────────────────────────
 // Phase allocation and volume schedule generation.
-// Extracted from App.jsx lines 82-388.
+// V2: progressive growth clamp(×10%, 3, 10), plateau in Specific,
+//     adaptive assimilation, tiered cap factors, TAPER_PROFILES.
 
 import {
   ABSOLUTE_CAP, CEILING_GROWTH_RATE, DISTANCE_MIN_CEILING,
   SPECIFIC_MAX_WEEKS, CONSTRUCTION_PREREQ,
+  VOLUME_CAP_FACTORS, TAPER_PROFILES,
 } from '../data/constants';
+
+// ── Unchanged from V1 ──────────────────────────────────────────────
 
 export function computeStartingVolume(avg4w, lastWeek) {
   return (avg4w + lastWeek) / 2;
@@ -19,53 +23,84 @@ export function clamp(value, minimum, maximum) {
   return Math.max(minimum, Math.min(maximum, value));
 }
 
+// ── V2 cap factor (tiered, from constants) ─────────────────────────
+
 export function getCapFactor(referenceVolume) {
-  if (referenceVolume < 30) return 0.75;
-  if (referenceVolume < 50) return 0.50;
-  if (referenceVolume < 70) return 0.30;
-  if (referenceVolume < 100) return 0.20;
-  if (referenceVolume < 150) return 0.10;
-  return 0.05;
+  for (const { threshold, factor } of VOLUME_CAP_FACTORS) {
+    if (referenceVolume < threshold) return factor;
+  }
+  // Should never reach here, but fallback
+  return 0.20;
 }
+
+// ── Deprecated wrapper (backward compat) ───────────────────────────
 
 export function computePhaseCap(referenceVolume) {
   const factor = getCapFactor(referenceVolume);
   return Math.min(referenceVolume * (1 + factor), ABSOLUTE_CAP);
 }
 
+// ── V2 global ceiling ──────────────────────────────────────────────
+
 export function computeGlobalCeiling(annualAvg, distance) {
-  const factor = getCapFactor(annualAvg);
-  let ceiling = annualAvg * (1 + factor);
+  const ref = Math.max(annualAvg, 20);
+  const factor = getCapFactor(ref);
+  let ceiling = ref * (1 + factor);
   if (distance && DISTANCE_MIN_CEILING[distance]) {
     ceiling = Math.max(ceiling, DISTANCE_MIN_CEILING[distance]);
   }
   return Math.min(ceiling, ABSOLUTE_CAP);
 }
 
-export function computeTaper(distance, lastSpecificWeekVolume) {
-  if (distance === "5km" || distance === "10km") return { weeks: 1, type: "standard" };
-  if (distance === "Semi Marathon") {
-    return lastSpecificWeekVolume < 60 ? { weeks: 1, type: "standard" } : { weeks: 1, type: "10days" };
-  }
+// ── V2 taper ───────────────────────────────────────────────────────
+
+/**
+ * Compute taper parameters from TAPER_PROFILES.
+ * @param {string} distance - Race distance
+ * @param {number} volumeCap - The volume cap reached in Construction
+ * @returns {{ weeks: number, factors: number[] }}
+ */
+export function computeTaper(distance, volumeCap) {
   if (distance === "Marathon") {
-    return lastSpecificWeekVolume < 60 ? { weeks: 1, type: "10days" } : { weeks: 2, type: "standard" };
+    const key = volumeCap >= 80 ? "Marathon_high" : "Marathon_low";
+    const factors = TAPER_PROFILES[key] || [0.70, 0.50];
+    return { weeks: factors.length, factors };
   }
-  return { weeks: 1, type: "standard" };
+  const factors = TAPER_PROFILES[distance] || [0.75];
+  return { weeks: factors.length, factors };
 }
 
-export function allocatePhases(totalWeeks, distance, lastSpecificVolume, isFirstCycle = true, planTotalWeeks = null) {
+// ── V2 phase allocation ────────────────────────────────────────────
+
+/**
+ * Allocate training phases.
+ * V2: 3rd param is annualAvg (was lastSpecificVolume in V1).
+ * Assimilation: adaptive 3:1 (<50km volumeCap) or 4:1 (≥50km) in Base AND Construction.
+ *
+ * @param {number} totalWeeks
+ * @param {string} distance
+ * @param {number} annualAvg - Annual average weekly volume
+ * @param {boolean} isFirstCycle
+ * @param {number|null} planTotalWeeks
+ * @returns {Object} Phase allocation
+ */
+export function allocatePhases(totalWeeks, distance, annualAvg, isFirstCycle = true, planTotalWeeks = null) {
   if (planTotalWeeks === null) planTotalWeeks = totalWeeks;
+
+  const volumeCap = computeGlobalCeiling(annualAvg, distance);
 
   const result = {
     totalWeeks, distance,
     base: 0, construction: 0, specific: 0, taper: 0,
     taperType: "standard",
+    baseAssimilations: [],
     constructionAssimilations: [],
     warnings: [],
     valid: true,
   };
 
-  const baseWeeks = isFirstCycle ? (planTotalWeeks <= 12 ? 4 : 6) : 4;
+  // Base weeks: 4 if plan≤12 or subsequent cycle, 6 if first cycle >12 weeks
+  const baseWeeks = isFirstCycle ? (planTotalWeeks <= 12 ? 4 : 6) : 3;
 
   if (totalWeeks < 8) {
     result.valid = false;
@@ -77,12 +112,12 @@ export function allocatePhases(totalWeeks, distance, lastSpecificVolume, isFirst
     result.warnings.push(`Plan de ${totalWeeks} semaines : non optimal. 12 semaines recommandées.`);
   }
 
-  let remaining = totalWeeks;
-  const { weeks: taperWeeks, type: taperType } = computeTaper(distance, lastSpecificVolume);
+  // Taper allocation
+  const { weeks: taperWeeks, factors: taperFactors } = computeTaper(distance, volumeCap);
   const maxSpecific = SPECIFIC_MAX_WEEKS[distance] || 4;
-  const minConstruction = CONSTRUCTION_PREREQ[distance] || 6;
-  const afterBase = remaining - baseWeeks;
-  const idealNeed = minConstruction + maxSpecific + taperWeeks;
+
+  const afterBase = totalWeeks - baseWeeks;
+  const idealNeed = 4 + maxSpecific + taperWeeks; // min 4 construction + specific + taper
 
   let specificWeeks, actualTaper, constructionWeeks;
 
@@ -92,23 +127,23 @@ export function allocatePhases(totalWeeks, distance, lastSpecificVolume, isFirst
     constructionWeeks = afterBase - specificWeeks - actualTaper;
   } else {
     const availableForCs = afterBase - taperWeeks;
-    if (availableForCs >= minConstruction + 1) {
-      constructionWeeks = minConstruction;
-      specificWeeks = Math.min(availableForCs - minConstruction, maxSpecific);
+    if (availableForCs >= 4 + 1) {
+      // Enough for min construction + at least 1 specific + taper
+      specificWeeks = Math.min(availableForCs - 4, maxSpecific);
       actualTaper = taperWeeks;
       constructionWeeks = afterBase - specificWeeks - actualTaper;
-    } else if (availableForCs >= minConstruction) {
+    } else if (availableForCs >= 4) {
       constructionWeeks = afterBase;
       specificWeeks = 0;
       actualTaper = 0;
       result.warnings.push("Pas assez de temps pour la phase spécifique et l'affûtage.");
     } else {
-      if (afterBase >= minConstruction + 1) {
-        specificWeeks = Math.min(afterBase - minConstruction, maxSpecific);
+      if (afterBase >= 5) {
+        specificWeeks = Math.min(afterBase - 4, maxSpecific);
         constructionWeeks = afterBase - specificWeeks;
         actualTaper = 0;
         result.warnings.push("Pas assez de temps pour l'affûtage.");
-      } else if (afterBase >= 4) {
+      } else if (afterBase >= 2) {
         constructionWeeks = afterBase;
         specificWeeks = 0;
         actualTaper = 0;
@@ -128,19 +163,45 @@ export function allocatePhases(totalWeeks, distance, lastSpecificVolume, isFirst
   result.construction = constructionWeeks;
   result.specific = specificWeeks;
   result.taper = actualTaper;
-  result.taperType = actualTaper > 0 ? taperType : "none";
+  result.taperType = actualTaper > 0 ? "profile" : "none";
 
+  // ── Assimilation scheduling ──
+  // Adaptive: 3:1 pattern if volumeCap < 50, 4:1 if ≥ 50
+  const assimCycle = volumeCap < 50 ? 3 : 4;
+
+  // Base assimilations — last week of base is always assimilation
+  if (baseWeeks > 0) {
+    const baseAssim = [];
+    // For base, mark last week as assimilation
+    baseAssim.push(baseWeeks);
+    // If base is long enough for an intermediate assimilation
+    if (baseWeeks > assimCycle + 1) {
+      let w = assimCycle;
+      while (w < baseWeeks) {
+        if (!baseAssim.includes(w)) baseAssim.push(w);
+        w += assimCycle;
+      }
+    }
+    result.baseAssimilations = baseAssim.sort((a, b) => a - b);
+  }
+
+  // Construction assimilations
   if (constructionWeeks > 0) {
     const assimWeeks = [];
-    let w = 5;
-    while (w < constructionWeeks) { assimWeeks.push(w); w += 5; }
-    if (!assimWeeks.includes(constructionWeeks)) assimWeeks.push(constructionWeeks);
+    let w = assimCycle;
+    while (w < constructionWeeks) { assimWeeks.push(w); w += assimCycle; }
+    // Last week of construction is always assimilation
+    if (constructionWeeks > 0 && !assimWeeks.includes(constructionWeeks)) {
+      assimWeeks.push(constructionWeeks);
+    }
+    // Avoid two assimilations too close together
     if (assimWeeks.length >= 2 && assimWeeks[assimWeeks.length - 1] - assimWeeks[assimWeeks.length - 2] <= 1) {
       assimWeeks.splice(assimWeeks.length - 2, 1);
     }
     result.constructionAssimilations = assimWeeks;
   }
 
+  // Validation
   const totalAllocated = result.base + result.construction + result.specific + result.taper;
   if (totalAllocated !== totalWeeks) {
     result.warnings.push(`Allocation mismatch: ${totalAllocated} vs ${totalWeeks} semaines.`);
@@ -149,95 +210,109 @@ export function allocatePhases(totalWeeks, distance, lastSpecificVolume, isFirst
   return result;
 }
 
+// ── V2 volume schedule ─────────────────────────────────────────────
+
+/**
+ * Generate weekly volume schedule.
+ * V2 algorithm:
+ * - Uniform increment: clamp(currentVol × 0.10, 3, 10)
+ * - At ceiling: +3%/week max
+ * - Base: climb towards annualAvg
+ * - Construction: climb towards volumeCap
+ * - Specific: PLATEAU at volumeCap
+ * - Taper: apply TAPER_PROFILES factors sequentially
+ * - Assimilation: ×0.75, then ramp 92% → peak → resume
+ *
+ * @param {Object} phases - From allocatePhases()
+ * @param {number} startingVolume - Runner's current volume
+ * @param {number} annualAvg - Annual average weekly volume
+ * @param {number} avg4w - Last 4-week average
+ * @returns {Array<{ week, phase, volume, isAssim }>}
+ */
 export function computeVolumeSchedule(phases, startingVolume, annualAvg, avg4w) {
   const schedule = [];
   let week = 1;
   let currentVol = startingVolume;
 
   const distance = phases.distance;
-  const globalCeiling = computeGlobalCeiling(annualAvg, distance);
+  const volumeCap = computeGlobalCeiling(annualAvg, distance);
 
-  // ── BASE ──
-  const baseWeeks = phases.base;
-  const baseCap = computePhaseCap(annualAvg);
   let preAssimVol = null;
+  let rampState = 0; // 0=normal, 1=post-assim-1, 2=post-assim-2
 
-  for (let i = 0; i < baseWeeks; i++) {
-    const isAssim = (i === baseWeeks - 1);
-    let vol;
+  // ── Helper: compute increment ──
+  function computeIncrement(vol, ceiling) {
+    if (vol >= ceiling) {
+      // At or above ceiling: drift at +3%
+      return vol * CEILING_GROWTH_RATE;
+    }
+    return clamp(vol * 0.10, 3, 10);
+  }
+
+  // ── Helper: handle assimilation & ramp ──
+  function handleWeek(vol, cap, isAssim) {
     if (isAssim) {
       preAssimVol = currentVol;
       vol = currentVol * 0.75;
+      rampState = 1;
+    } else if (rampState === 1) {
+      // First week after assimilation: 92% of pre-assimilation volume
+      vol = preAssimVol * 0.92;
+      vol = Math.min(vol, cap, ABSOLUTE_CAP);
+      rampState = 2;
+    } else if (rampState === 2) {
+      // Second week: back to pre-assimilation volume
+      vol = preAssimVol;
+      vol = Math.min(vol, cap, ABSOLUTE_CAP);
+      rampState = 0;
     } else {
-      const aboveCeiling = currentVol >= globalCeiling;
-      let increment;
-      if (aboveCeiling) {
-        increment = currentVol * CEILING_GROWTH_RATE;
-      } else if (currentVol < annualAvg) {
-        increment = currentVol * 0.20;
-      } else {
-        increment = currentVol * 0.10;
-      }
-      if (!aboveCeiling) {
-        increment = clamp(increment, 5, 20);
-      }
-      vol = currentVol + increment;
-      vol = Math.min(vol, baseCap, ABSOLUTE_CAP);
+      vol = Math.min(vol, cap, ABSOLUTE_CAP);
     }
+    return vol;
+  }
+
+  // ── BASE ──
+  const baseWeeks = phases.base;
+  const baseAssimSet = new Set(phases.baseAssimilations || []);
+
+  for (let i = 0; i < baseWeeks; i++) {
+    const weekInPhase = i + 1;
+    const isAssim = baseAssimSet.has(weekInPhase);
+    let vol;
+
+    if (isAssim || rampState > 0) {
+      const inc = computeIncrement(currentVol, annualAvg);
+      vol = currentVol + inc;
+      vol = handleWeek(vol, annualAvg, isAssim);
+    } else {
+      const inc = computeIncrement(currentVol, annualAvg);
+      vol = currentVol + inc;
+      vol = Math.min(vol, annualAvg, ABSOLUTE_CAP);
+    }
+
     vol = Math.round(vol * 10) / 10;
     schedule.push({ week, phase: "Base", volume: vol, isAssim });
     if (!isAssim) currentVol = vol;
     week++;
   }
 
-  // ── Transition Base → Construction ──
-  const nonAssimBase = schedule.filter(s => s.phase === "Base" && !s.isAssim).map(s => s.volume);
-  let baseAvgLast4;
-  if (nonAssimBase.length >= 4) baseAvgLast4 = nonAssimBase.slice(-4).reduce((a, b) => a + b, 0) / 4;
-  else if (nonAssimBase.length > 0) baseAvgLast4 = nonAssimBase.reduce((a, b) => a + b, 0) / nonAssimBase.length;
-  else baseAvgLast4 = currentVol;
-
   // ── CONSTRUCTION ──
   const constructionWeeks = phases.construction;
   const assimScheduleSet = new Set(phases.constructionAssimilations || []);
-  const constructionCap = computePhaseCap(baseAvgLast4);
-  let assimilationsSeen = 0;
-  let rampState = preAssimVol !== null ? 1 : 0;
 
   for (let i = 0; i < constructionWeeks; i++) {
     const weekInPhase = i + 1;
     const isAssim = assimScheduleSet.has(weekInPhase);
     let vol;
 
-    if (isAssim) {
-      preAssimVol = currentVol;
-      vol = currentVol * 0.70;
-      assimilationsSeen++;
-      rampState = 1;
-    } else if (rampState === 1) {
-      vol = preAssimVol * 0.92;
-      const effectiveCap = constructionCap + (assimilationsSeen * 2);
-      vol = Math.min(vol, effectiveCap, ABSOLUTE_CAP);
-      rampState = 2;
-    } else if (rampState === 2) {
-      vol = preAssimVol;
-      const effectiveCap = constructionCap + (assimilationsSeen * 2);
-      vol = Math.min(vol, effectiveCap, ABSOLUTE_CAP);
-      rampState = 0;
+    if (isAssim || rampState > 0) {
+      const inc = computeIncrement(currentVol, volumeCap);
+      vol = currentVol + inc;
+      vol = handleWeek(vol, volumeCap, isAssim);
     } else {
-      const aboveCeiling = currentVol >= globalCeiling;
-      let increment;
-      if (aboveCeiling) {
-        increment = currentVol * CEILING_GROWTH_RATE;
-      } else {
-        increment = currentVol * 0.10;
-      }
-      if (!aboveCeiling) {
-        increment = clamp(increment, 5, 20);
-      }
-      vol = currentVol + increment;
-      const effectiveCap = constructionCap + (assimilationsSeen * 2);
-      vol = Math.min(vol, effectiveCap, ABSOLUTE_CAP);
+      const inc = computeIncrement(currentVol, volumeCap);
+      vol = currentVol + inc;
+      vol = Math.min(vol, volumeCap, ABSOLUTE_CAP);
     }
 
     vol = Math.round(vol * 10) / 10;
@@ -246,41 +321,27 @@ export function computeVolumeSchedule(phases, startingVolume, annualAvg, avg4w) 
     week++;
   }
 
-  // ── Transition Construction → Specific ──
-  const nonAssimConst = schedule.filter(s => s.phase === "Construction" && !s.isAssim).map(s => s.volume);
-  let constAvgLast4;
-  if (nonAssimConst.length >= 4) constAvgLast4 = nonAssimConst.slice(-4).reduce((a, b) => a + b, 0) / 4;
-  else if (nonAssimConst.length > 0) constAvgLast4 = nonAssimConst.reduce((a, b) => a + b, 0) / nonAssimConst.length;
-  else constAvgLast4 = currentVol;
-
-  // ── SPECIFIC ──
+  // ── SPECIFIC (PLATEAU) ──
   const specificWeeks = phases.specific;
-  const specificCap = computePhaseCap(constAvgLast4);
 
+  // Complete any post-assimilation ramp, then hold plateau
   for (let i = 0; i < specificWeeks; i++) {
     let vol;
+
     if (rampState === 1) {
       vol = preAssimVol * 0.92;
-      vol = Math.min(vol, specificCap, ABSOLUTE_CAP);
+      vol = Math.min(vol, volumeCap, ABSOLUTE_CAP);
       rampState = 2;
     } else if (rampState === 2) {
       vol = preAssimVol;
-      vol = Math.min(vol, specificCap, ABSOLUTE_CAP);
+      vol = Math.min(vol, volumeCap, ABSOLUTE_CAP);
       rampState = 0;
     } else {
-      const aboveCeiling = currentVol >= globalCeiling;
-      let increment;
-      if (aboveCeiling) {
-        increment = currentVol * CEILING_GROWTH_RATE;
-      } else {
-        increment = currentVol * 0.05;
-      }
-      if (!aboveCeiling) {
-        increment = clamp(increment, 5, 10);
-      }
-      vol = currentVol + increment;
-      vol = Math.min(vol, specificCap, ABSOLUTE_CAP);
+      // Plateau: hold current volume, allow tiny drift +2-3%
+      const drift = currentVol * 0.02;
+      vol = Math.min(currentVol + drift, volumeCap, ABSOLUTE_CAP);
     }
+
     vol = Math.round(vol * 10) / 10;
     schedule.push({ week, phase: "Spécifique", volume: vol, isAssim: false });
     currentVol = vol;
@@ -289,10 +350,14 @@ export function computeVolumeSchedule(phases, startingVolume, annualAvg, avg4w) 
 
   // ── TAPER ──
   const taperWeeks = phases.taper;
-  const taperFactor = currentVol > 100 ? 0.70 : 0.75;
+  // Get factors from profile
+  const { factors: taperFactors } = computeTaper(distance, volumeCap);
+  // Use the peak volume (before taper starts) as reference
+  const peakVol = currentVol;
 
   for (let i = 0; i < taperWeeks; i++) {
-    let vol = currentVol * taperFactor;
+    const factor = taperFactors[i] !== undefined ? taperFactors[i] : 0.70;
+    let vol = peakVol * factor;
     vol = Math.round(vol * 10) / 10;
     schedule.push({ week, phase: "Affûtage", volume: vol, isAssim: false });
     currentVol = vol;

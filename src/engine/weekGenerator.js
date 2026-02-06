@@ -1,6 +1,6 @@
-import { selectSession, buildSessionFromLibrary } from './sessionResolver';
+import { selectSession, selectSessionByRPE, buildSessionFromLibrary } from './sessionResolver';
 import { formatPace } from './vdot';
-import { PHASE_COLORS, SESSION_TYPES, DAYS_LIST } from '../data/constants';
+import { PHASE_COLORS, SESSION_TYPES, DAYS_LIST, SL_MAX_KM, VOLUME_DISTRIBUTION } from '../data/constants';
 import { FONT } from '../styles/tokens';
 
 // ── Shared components ───────────────────────────────────────────────
@@ -37,428 +37,338 @@ export function computePhaseBoundaries(volumeSchedule) {
   return boundaries;
 }
 
-// Session plan generator with library-based progression
+// ── V2 Session Generation ─────────────────────────────────────────────
+// Architecture: 4 internal functions (buildSessionSlots → resolveSlot →
+// distributeVolume → assignToDays) replace the V1 per-phase if/else blocks.
+
+// ── 1. buildSessionSlots ──
+// Returns slot descriptors: [{ role, type, targetRPE, volumePct }]
+function buildSessionSlots(phase, ratio, nbSessions, isAssim, distance, weekVolume) {
+  const slots = [];
+
+  // Phase progression sub-phase (début/milieu/fin)
+  const subPhase = ratio < 0.33 ? "début" : ratio < 0.66 ? "milieu" : "fin";
+
+  if (phase === "Base") {
+    // 0 quality, 1 SL RPE 3-4, rest footings RPE 2-3
+    slots.push({ role: "sl", type: "SORTIE_LONGUE", targetRPE: isAssim ? 3 : 4, volumePct: VOLUME_DISTRIBUTION.SL_PCT });
+    for (let i = 1; i < nbSessions; i++) {
+      slots.push({ role: "footing", type: "FOOTING", targetRPE: isAssim ? 2 : 3, volumePct: 0 }); // auto-distributed
+    }
+  } else if (phase === "Construction") {
+    if (isAssim) {
+      // Assimilation: 0 quality, max RPE 4
+      slots.push({ role: "sl", type: "SORTIE_LONGUE", targetRPE: 3, volumePct: VOLUME_DISTRIBUTION.SL_PCT });
+      for (let i = 1; i < nbSessions; i++) {
+        slots.push({ role: "footing", type: "FOOTING", targetRPE: 3, volumePct: 0 });
+      }
+    } else {
+      // 1 quality + 1 SL + footings. 5+: 2nd quality
+      const qualityType = subPhase === "fin" ? "SEUIL2" : "SEUIL2";
+      const qualityRPE = subPhase === "début" ? 5 : subPhase === "milieu" ? 6 : 7;
+      const slRPE = subPhase === "début" ? 4 : subPhase === "milieu" ? 5 : 6;
+
+      slots.push({ role: "quality_high", type: qualityType, targetRPE: qualityRPE, volumePct: VOLUME_DISTRIBUTION.QUALITY_HIGH_PCT });
+      slots.push({ role: "sl", type: "SORTIE_LONGUE", targetRPE: slRPE, volumePct: VOLUME_DISTRIBUTION.SL_PCT });
+
+      if (nbSessions >= 5) {
+        const secondType = subPhase === "début" ? "SEUIL2" : "VMA_COURTE";
+        const secondRPE = subPhase === "début" ? 5 : subPhase === "milieu" ? 5 : 6;
+        slots.push({ role: "quality_low", type: secondType, targetRPE: secondRPE, volumePct: VOLUME_DISTRIBUTION.QUALITY_LOW_PCT });
+      }
+
+      // Fill remaining with footings and recovery
+      const filled = slots.length;
+      if (nbSessions >= filled + 1) {
+        slots.push({ role: "recup", type: "FOOTING", targetRPE: 2, volumePct: VOLUME_DISTRIBUTION.RECUP_PCT });
+      }
+      while (slots.length < nbSessions) {
+        slots.push({ role: "footing", type: "FOOTING", targetRPE: 3, volumePct: 0 });
+      }
+    }
+  } else if (phase === "Spécifique") {
+    if (isAssim) {
+      slots.push({ role: "sl", type: "SORTIE_LONGUE", targetRPE: 3, volumePct: VOLUME_DISTRIBUTION.SL_PCT });
+      for (let i = 1; i < nbSessions; i++) {
+        slots.push({ role: "footing", type: "FOOTING", targetRPE: 3, volumePct: 0 });
+      }
+    } else {
+      // 1 quality RPE 7-8, 1 SL RPE 6-8, footings. 5+: rappel RPE 5
+      const qualityType = subPhase === "début" ? "TEMPO" : "TEMPO";
+      const qualityRPE = subPhase === "début" ? 7 : subPhase === "fin" ? 8 : 7;
+      // No RPE 9 if < 40km/week
+      const clampedQualityRPE = weekVolume < 40 ? Math.min(qualityRPE, 7) : qualityRPE;
+
+      const slRPE = subPhase === "début" ? 6 : subPhase === "fin" ? 8 : 7;
+      const clampedSlRPE = weekVolume < 40 ? Math.min(slRPE, 6) : slRPE;
+
+      slots.push({ role: "quality_high", type: qualityType, targetRPE: clampedQualityRPE, volumePct: VOLUME_DISTRIBUTION.QUALITY_HIGH_PCT });
+      slots.push({ role: "sl", type: "SORTIE_LONGUE", targetRPE: clampedSlRPE, volumePct: VOLUME_DISTRIBUTION.SL_PCT });
+
+      if (nbSessions >= 5) {
+        slots.push({ role: "quality_low", type: "SEUIL2", targetRPE: 5, volumePct: VOLUME_DISTRIBUTION.QUALITY_LOW_PCT });
+      }
+
+      const filled = slots.length;
+      if (nbSessions >= filled + 1) {
+        slots.push({ role: "recup", type: "FOOTING", targetRPE: 2, volumePct: VOLUME_DISTRIBUTION.RECUP_PCT });
+      }
+      while (slots.length < nbSessions) {
+        slots.push({ role: "footing", type: "FOOTING", targetRPE: 3, volumePct: 0 });
+      }
+    }
+  } else if (phase === "Affûtage") {
+    // 0-1 rappel RPE 5, footings RPE 2-3. Last taper week: max RPE 3
+    const isLastWeek = ratio >= 0.8;
+
+    if (!isLastWeek && nbSessions >= 3) {
+      slots.push({ role: "quality_low", type: "TEMPO", targetRPE: 5, volumePct: VOLUME_DISTRIBUTION.QUALITY_LOW_PCT });
+    }
+
+    // Remaining all easy
+    while (slots.length < nbSessions) {
+      const rpe = isLastWeek ? 2 : 3;
+      if (slots.length === 0 || slots.every(s => s.role !== "sl")) {
+        slots.push({ role: "sl", type: "SORTIE_LONGUE", targetRPE: 3, volumePct: VOLUME_DISTRIBUTION.SL_PCT });
+      } else {
+        slots.push({ role: "footing", type: "FOOTING", targetRPE: rpe, volumePct: 0 });
+      }
+    }
+  }
+
+  return slots;
+}
+
+// ── 2. resolveSlot ──
+// Tries selectSessionByRPE, falls back to selectSession, then hardcoded inline
+function resolveSlot(slot, phase, ratio, paces, weekInPhase, totalWeeksInPhase, targetKm) {
+  // Try RPE-based selection first
+  let entry = selectSessionByRPE(slot.type, phase, slot.targetRPE);
+
+  // Fallback to level-based selection
+  if (!entry) {
+    entry = selectSession(slot.type, phase, weekInPhase, totalWeeksInPhase);
+  }
+
+  if (entry) {
+    return buildSessionFromLibrary(entry, targetKm, paces, slot.type);
+  }
+
+  // Ultimate fallback: hardcoded inline sessions
+  const easyPace = paces?.Easy ? `${formatPace(paces.Easy.slow)}-${formatPace(paces.Easy.fast)}` : "5:30-6:00";
+  const tempoPace = paces?.Tempo ? `${formatPace(paces.Tempo.fast)}-${formatPace(paces.Tempo.slow)}` : "4:30-4:50";
+  const seuilPace = paces?.Seuil2 ? `${formatPace(paces.Seuil2.fast)}-${formatPace(paces.Seuil2.slow)}` : "4:15-4:30";
+
+  if (slot.type === "SORTIE_LONGUE") {
+    return {
+      type: "SL", title: "Sortie longue", duration: `${Math.round(targetKm * 5.5)}min`,
+      distance: targetKm,
+      warmup: { duration: "—", pace: "—", description: "Pas d'échauffement spécifique" },
+      main: [{ description: "Course continue, départ lent puis allure stable", duration: `${Math.round(targetKm * 5.5)}min`, pace: easyPace }],
+      cooldown: { duration: "5min", pace: easyPace, description: "Marche + étirements" },
+      notes: "Emportez de l'eau si >1h. Restez en zone confortable.",
+    };
+  }
+
+  if (slot.type === "SEUIL2") {
+    return {
+      type: "SEUIL", title: "Seuil", duration: "55-60min",
+      distance: targetKm,
+      warmup: { duration: "15min", pace: easyPace, description: "Footing + accélérations" },
+      main: [{ description: "3 × 10min @ allure seuil", duration: "30min", pace: seuilPace }],
+      cooldown: { duration: "10min", pace: easyPace, description: "Retour au calme" },
+      notes: "Allure seuil = inconfortable mais tenable.",
+    };
+  }
+
+  if (slot.type === "VMA_COURTE") {
+    const vmaPace = paces?.VMACourte ? `${formatPace(paces.VMACourte.fast)}-${formatPace(paces.VMACourte.slow)}` : "3:45-4:00";
+    return {
+      type: "VMA", title: "VMA courte", duration: "50-55min",
+      distance: targetKm,
+      warmup: { duration: "20min", pace: easyPace, description: "Footing + gammes" },
+      main: [{ description: "10 × 300m @ VMA", duration: "15min effort", pace: vmaPace }],
+      cooldown: { duration: "10min", pace: easyPace, description: "Retour au calme" },
+      notes: "Régularité > vitesse.",
+    };
+  }
+
+  if (slot.type === "TEMPO") {
+    return {
+      type: "TEMPO", title: "Tempo", duration: `${Math.round(targetKm * 5)}min`,
+      distance: targetKm,
+      warmup: { duration: "15min", pace: easyPace, description: "Footing + accélérations" },
+      main: [{ description: "2 × 15min @ allure objectif", duration: "30min", pace: tempoPace }],
+      cooldown: { duration: "10min", pace: easyPace, description: "Retour au calme" },
+      notes: "Allure cible. Mémorisez les sensations.",
+    };
+  }
+
+  // Default: footing
+  return {
+    type: "EF", title: slot.role === "recup" ? "Footing récupération" : "Footing endurance",
+    duration: `${Math.round(targetKm * 5.5)}min`,
+    distance: targetKm,
+    warmup: { duration: "—", pace: "—", description: "—" },
+    main: [{ description: slot.role === "recup" ? "Footing très lent" : "Footing en endurance", duration: `${Math.round(targetKm * 5.5)}min`, pace: easyPace }],
+    cooldown: { duration: "5min", pace: "—", description: "Étirements" },
+    notes: slot.role === "recup" ? "Récupération active." : "Course facile, aisance respiratoire.",
+  };
+}
+
+// ── 3. distributeVolume ──
+// Assigns km to each session based on role percentages & SL cap
+function distributeVolume(sessions, slots, weekVolume, distance) {
+  const slMaxKm = (SL_MAX_KM && SL_MAX_KM[distance]) || 30;
+
+  // First pass: assign km to sessions with volumePct
+  let allocated = 0;
+  const footingIndices = [];
+
+  sessions.forEach((session, i) => {
+    const slot = slots[i];
+    if (!slot) return;
+
+    if (slot.role === "sl") {
+      const targetKm = Math.min(weekVolume * slot.volumePct, slMaxKm);
+      session.distance = Math.round(targetKm);
+      allocated += session.distance;
+    } else if (slot.volumePct > 0) {
+      const targetKm = weekVolume * slot.volumePct;
+      session.distance = Math.round(targetKm);
+      allocated += session.distance;
+    } else {
+      footingIndices.push(i);
+    }
+  });
+
+  // Distribute remaining km evenly across footings
+  const remaining = Math.max(0, weekVolume - allocated);
+  if (footingIndices.length > 0) {
+    const perFooting = Math.round(remaining / footingIndices.length);
+    footingIndices.forEach(i => {
+      sessions[i].distance = Math.max(1, perFooting);
+    });
+  }
+}
+
+// ── 4. assignToDays ──
+// Places sessions on training days respecting constraints:
+// - SL on Sam/Dim
+// - Hardest quality mid-week (Mar-Jeu)
+// - No 2× RPE≥6 adjacent
+// - Day before/after SL: RPE ≤ 3
+function assignToDays(sessions, slots, trainingDays) {
+  const dayOffsets = { "Lun": 0, "Mar": 1, "Mer": 2, "Jeu": 3, "Ven": 4, "Sam": 5, "Dim": 6 };
+  const QUALITY_TYPES = new Set(["SEUIL", "VMA", "TEMPO"]);
+
+  const sortedDays = [...trainingDays].sort((a, b) => (dayOffsets[a] || 0) - (dayOffsets[b] || 0));
+  const daySlots = sortedDays.map(d => ({ dayName: d, offset: dayOffsets[d] || 0, session: null, slot: null }));
+
+  // Index sessions by role
+  const slSessions = [];
+  const qualitySessions = [];
+  const easySessions = [];
+
+  sessions.forEach((s, i) => {
+    const slot = slots[i];
+    if (s.type === "SL") slSessions.push({ session: s, slot });
+    else if (QUALITY_TYPES.has(s.type)) qualitySessions.push({ session: s, slot });
+    else easySessions.push({ session: s, slot });
+  });
+
+  // Sort quality sessions by RPE descending (hardest first for better placement)
+  qualitySessions.sort((a, b) => (b.slot?.targetRPE || 0) - (a.slot?.targetRPE || 0));
+
+  const weekendSlots = daySlots.filter(d => d.dayName === "Sam" || d.dayName === "Dim");
+  const emptySlots = () => daySlots.filter(d => !d.session);
+
+  // Place SL on weekend
+  slSessions.forEach(({ session, slot }) => {
+    const free = weekendSlots.find(d => !d.session);
+    if (free) { free.session = session; free.slot = slot; }
+    else {
+      const fallback = [...daySlots].reverse().find(d => !d.session);
+      if (fallback) { fallback.session = session; fallback.slot = slot; }
+    }
+  });
+
+  // Place quality with spacing constraints
+  const isAdjacentToHard = (testSlot) => {
+    return daySlots.some(d => d.session && d.slot &&
+      (d.slot.targetRPE >= 6 || d.session.type === "SL") &&
+      Math.abs(d.offset - testSlot.offset) === 1
+    );
+  };
+
+  qualitySessions.forEach(({ session, slot }) => {
+    // Prefer mid-week slot not adjacent to hard/SL
+    const midWeek = emptySlots().filter(d => d.offset >= 1 && d.offset <= 3 && !isAdjacentToHard(d));
+    const safe = midWeek[0] || emptySlots().find(d => !isAdjacentToHard(d));
+    if (safe) { safe.session = session; safe.slot = slot; }
+    else {
+      const fallback = emptySlots()[0];
+      if (fallback) { fallback.session = session; fallback.slot = slot; }
+    }
+  });
+
+  // Fill remaining with easy sessions
+  easySessions.forEach(({ session, slot }) => {
+    const s = emptySlots()[0];
+    if (s) { s.session = session; s.slot = slot; }
+  });
+
+  return daySlots;
+}
+
+// ── Main generator (V2) ──────────────────────────────────────────────
 export function generateWeeklyPlan(plan, availability, paces, startDate) {
   if (!plan || !plan.cycles || plan.cycles.length === 0) return [];
 
   const cycle = plan.cycles[0];
   const { volumeSchedule } = cycle;
+  const distance = cycle.objective?.distance || "10km";
   const sessionsPerWeek = availability?.sessionsPerWeek || 4;
   const trainingDays = availability?.trainingDays || ["Mar", "Jeu", "Sam", "Dim"];
 
-  // Map day names to day offsets (Lun=0, Mar=1, etc.)
   const dayOffsets = { "Lun": 0, "Mar": 1, "Mer": 2, "Jeu": 3, "Ven": 4, "Sam": 5, "Dim": 6 };
-
-  // Get paces for display (used by fallback hardcoded sessions)
-  const easyPace = paces?.Easy ? `${formatPace(paces.Easy.slow)}-${formatPace(paces.Easy.fast)}` : "5:30-6:00";
-  const tempoPace = paces?.Tempo ? `${formatPace(paces.Tempo.fast)}-${formatPace(paces.Tempo.slow)}` : "4:30-4:50";
-  const seuilPace = paces?.Seuil2 ? `${formatPace(paces.Seuil2.fast)}-${formatPace(paces.Seuil2.slow)}` : "4:15-4:30";
-  const vmaPace = paces?.VMACourte ? `${formatPace(paces.VMACourte.fast)}-${formatPace(paces.VMACourte.slow)}` : "3:45-4:00";
-
   const baseDate = startDate || new Date();
   const phaseBoundaries = computePhaseBoundaries(volumeSchedule);
+
+  const phaseObjectives = {
+    "Base": "Focus endurance — construire le socle aérobie",
+    "Construction": "Focus résistance — introduction de l'intensité",
+    "Spécifique": "Focus allure cible — préparation à l'objectif",
+    "Affûtage": "Focus fraîcheur — assimilation et récupération",
+  };
 
   return volumeSchedule.map((weekData, idx) => {
     const { week, phase, volume, isAssim } = weekData;
 
-    // Track progression within the phase
     const pb = phaseBoundaries[phase] || { start: 0, total: 1 };
     const weekInPhase = idx - pb.start + 1;
     const totalWeeksInPhase = pb.total;
+    const ratio = totalWeeksInPhase > 1 ? (weekInPhase - 1) / (totalWeeksInPhase - 1) : 0.5;
 
-    // Calculate week start date
     const weekStartDate = new Date(baseDate);
     weekStartDate.setDate(weekStartDate.getDate() + (idx * 7));
 
-    // Generate sessions based on phase
-    let sessions = [];
-    const kmPerSession = volume / sessionsPerWeek;
+    // ── Step 1: Build session slot descriptors ──
+    const slots = buildSessionSlots(phase, ratio, sessionsPerWeek, isAssim, distance, volume);
 
-    // Phase-specific focus text
-    const phaseObjectives = {
-      "Base": "Focus endurance — construire le socle aérobie",
-      "Construction": "Focus résistance — introduction de l'intensité",
-      "Spécifique": "Focus allure cible — préparation à l'objectif",
-      "Affûtage": "Focus fraîcheur — assimilation et récupération",
-    };
-
-    if (phase === "Base") {
-      const footingLib1 = selectSession("FOOTING", phase, weekInPhase, totalWeeksInPhase);
-      const footingLib2 = selectSession("FOOTING", phase, Math.max(1, weekInPhase - 1), totalWeeksInPhase);
-      const slLib = selectSession("SORTIE_LONGUE", phase, weekInPhase, totalWeeksInPhase);
-      sessions = [
-        footingLib1
-          ? buildSessionFromLibrary(footingLib1, Math.round(kmPerSession * 0.9), paces, "FOOTING")
-          : {
-              type: "EF", title: "Footing endurance", duration: "45-50min",
-              distance: Math.round(kmPerSession * 0.9),
-              warmup: { duration: "10min", pace: easyPace, description: "Début très progressif" },
-              main: [{ description: "Course continue en aisance respiratoire", duration: "30-35min", pace: easyPace }],
-              cooldown: { duration: "5min", pace: easyPace, description: "Retour au calme + étirements" },
-              notes: "Vous devez pouvoir tenir une conversation. Si vous êtes essoufflé, ralentissez.",
-            },
-        footingLib2
-          ? buildSessionFromLibrary(footingLib2, Math.round(kmPerSession * 0.9), paces, "FOOTING")
-          : {
-              type: "EF", title: "Footing + gammes", duration: "50min",
-              distance: Math.round(kmPerSession * 0.9),
-              warmup: { duration: "15min", pace: easyPace, description: "Footing progressif" },
-              main: [
-                { description: "Footing en endurance", duration: "25min", pace: easyPace },
-                { description: "Gammes techniques : montées de genoux, talons-fesses, griffés", duration: "5min", pace: "—" },
-                { description: "4 × 100m en accélération progressive", duration: "5min", pace: "Progressif" },
-              ],
-              cooldown: { duration: "5min", pace: easyPace, description: "Trot léger" },
-              notes: "Les accélérations servent à activer les fibres rapides sans fatigue.",
-            },
-        slLib
-          ? buildSessionFromLibrary(slLib, Math.round(kmPerSession * 1.6), paces, "SORTIE_LONGUE")
-          : {
-              type: "SL", title: "Sortie longue", duration: "1h15-1h30",
-              distance: Math.round(kmPerSession * 1.6),
-              warmup: { duration: "—", pace: "—", description: "Pas d'échauffement spécifique" },
-              main: [{ description: "Course continue, départ lent puis allure stable", duration: "1h15-1h30", pace: easyPace }],
-              cooldown: { duration: "5min", pace: easyPace, description: "Marche + étirements" },
-              notes: "Emportez de l'eau si >1h. Restez en zone confortable tout du long.",
-            },
-      ];
-      if (sessionsPerWeek >= 4) {
-        sessions.push({
-          type: "RECUP", title: "Footing récupération", duration: "30-35min",
-          distance: Math.round(kmPerSession * 0.6),
-          warmup: { duration: "—", pace: "—", description: "—" },
-          main: [{ description: "Footing très lent, récupération active", duration: "30-35min", pace: easyPace }],
-          cooldown: { duration: "5min", pace: "—", description: "Marche + étirements doux" },
-          notes: "Récupération active. Privilégiez le repos si fatigue.",
-        });
-      }
-      if (sessionsPerWeek >= 5) {
-        const footingLib5 = selectSession("FOOTING", phase, Math.min(weekInPhase + 1, totalWeeksInPhase), totalWeeksInPhase);
-        sessions.push(
-          footingLib5
-            ? buildSessionFromLibrary(footingLib5, Math.round(kmPerSession * 0.8), paces, "FOOTING")
-            : {
-                type: "EF", title: "Footing aérobie", duration: "40-45min",
-                distance: Math.round(kmPerSession * 0.8),
-                warmup: { duration: "10min", pace: easyPace, description: "Début progressif" },
-                main: [{ description: "Course continue en endurance", duration: "30min", pace: easyPace }],
-                cooldown: { duration: "5min", pace: easyPace, description: "Retour au calme" },
-                notes: "Séance de volume facile pour compléter la semaine.",
-              }
-        );
-      }
-      if (sessionsPerWeek >= 6) {
-        sessions.push({
-          type: "EF", title: "Footing + côtes légères", duration: "40-45min",
-          distance: Math.round(kmPerSession * 0.7),
-          warmup: { duration: "15min", pace: easyPace, description: "Footing tranquille" },
-          main: [{ description: "Footing vallonné ou 6 × 30s en côte légère", duration: "20min", pace: easyPace }],
-          cooldown: { duration: "5min", pace: easyPace, description: "Trot retour au calme" },
-          notes: "Renforcement musculaire naturel. Pas de sprint, gardez le contrôle.",
-        });
-      }
-    } else if (phase === "Construction") {
-      const seuilLib = selectSession("SEUIL2", phase, weekInPhase, totalWeeksInPhase);
-      const slLib = selectSession("SORTIE_LONGUE", phase, weekInPhase, totalWeeksInPhase);
-      const footingLib = selectSession("FOOTING", phase, weekInPhase, totalWeeksInPhase);
-      sessions = [
-        seuilLib
-          ? buildSessionFromLibrary(seuilLib, Math.round(kmPerSession * 1.0), paces, "SEUIL2")
-          : {
-              type: "SEUIL", title: "Seuil intervalles", duration: "55-60min",
-              distance: Math.round(kmPerSession * 1.0),
-              warmup: { duration: "15min", pace: easyPace, description: "Footing + 3 accélérations" },
-              main: [
-                { description: "3 × 10min @ allure seuil", duration: "30min", pace: seuilPace },
-                { description: "Récupération entre les blocs : 3min trot", duration: "6min", pace: easyPace },
-              ],
-              cooldown: { duration: "10min", pace: easyPace, description: "Retour au calme progressif" },
-              notes: "Allure seuil = inconfortable mais tenable. Respirez en 3 temps.",
-            },
-        footingLib
-          ? buildSessionFromLibrary(footingLib, Math.round(kmPerSession * 0.7), paces, "FOOTING")
-          : {
-              type: "EF", title: "Footing récupération", duration: "40-45min",
-              distance: Math.round(kmPerSession * 0.7),
-              warmup: { duration: "—", pace: "—", description: "—" },
-              main: [{ description: "Footing facile, récupération de la veille", duration: "40-45min", pace: easyPace }],
-              cooldown: { duration: "5min", pace: "—", description: "Étirements" },
-              notes: "Jour de récupération. Vraiment facile.",
-            },
-        slLib
-          ? buildSessionFromLibrary(slLib, Math.round(kmPerSession * 1.7), paces, "SORTIE_LONGUE")
-          : {
-              type: "SL", title: "Sortie longue progressive", duration: "1h30-1h45",
-              distance: Math.round(kmPerSession * 1.7),
-              warmup: { duration: "—", pace: "—", description: "—" },
-              main: [
-                { description: "1h en endurance fondamentale", duration: "1h", pace: easyPace },
-                { description: "20-30min en progression vers allure marathon", duration: "25min", pace: tempoPace },
-              ],
-              cooldown: { duration: "10min", pace: easyPace, description: "Retour au calme" },
-              notes: "Finir en accélérant apprend au corps à performer sur fatigue.",
-            },
-      ];
-      if (sessionsPerWeek >= 4) {
-        sessions.push({
-          type: "EF", title: "Footing aérobie", duration: "40min",
-          distance: Math.round(kmPerSession * 0.6),
-          warmup: { duration: "—", pace: "—", description: "—" },
-          main: [{ description: "Footing facile", duration: "40min", pace: easyPace }],
-          cooldown: { duration: "—", pace: "—", description: "Étirements" },
-          notes: "Séance de volume facile pour compléter la semaine.",
-        });
-      }
-      if (sessionsPerWeek >= 5) {
-        const vmaLib = selectSession("VMA_COURTE", phase, weekInPhase, totalWeeksInPhase);
-        sessions.push(
-          vmaLib
-            ? buildSessionFromLibrary(vmaLib, Math.round(kmPerSession * 0.9), paces, "VMA_COURTE")
-            : {
-                type: "VMA", title: "VMA courte", duration: "50-55min",
-                distance: Math.round(kmPerSession * 0.9),
-                warmup: { duration: "20min", pace: easyPace, description: "Footing + gammes + lignes droites" },
-                main: [
-                  { description: "10 × 300m @ allure VMA", duration: "15min effort", pace: vmaPace },
-                  { description: "Récupération : 1min trot entre chaque", duration: "—", pace: easyPace },
-                ],
-                cooldown: { duration: "10min", pace: easyPace, description: "Retour au calme" },
-                notes: "Régularité > vitesse. Chaque répétition au même temps.",
-              }
-        );
-      }
-      if (sessionsPerWeek >= 6) {
-        sessions.push({
-          type: "EF", title: "Footing endurance + renforcement", duration: "45min",
-          distance: Math.round(kmPerSession * 0.6),
-          warmup: { duration: "10min", pace: easyPace, description: "Footing tranquille" },
-          main: [
-            { description: "Footing en endurance", duration: "25min", pace: easyPace },
-            { description: "Circuit PPG : gainage, squats, fentes (3 séries)", duration: "10min", pace: "—" },
-          ],
-          cooldown: { duration: "5min", pace: "—", description: "Étirements" },
-          notes: "Le renforcement prévient les blessures. Ne négligez pas cette séance.",
-        });
-      }
-    } else if (phase === "Spécifique") {
-      const tempoLib = selectSession("TEMPO", phase, weekInPhase, totalWeeksInPhase);
-      const slLib = selectSession("SORTIE_LONGUE", phase, weekInPhase, totalWeeksInPhase);
-      const footingLib = selectSession("FOOTING", phase, weekInPhase, totalWeeksInPhase);
-      sessions = [
-        tempoLib
-          ? buildSessionFromLibrary(tempoLib, Math.round(kmPerSession * 1.1), paces, "TEMPO")
-          : {
-              type: "TEMPO", title: "Tempo allure objectif",
-              duration: `${Math.round(kmPerSession * 1.1 * 5)}min`,
-              distance: Math.round(kmPerSession * 1.1),
-              warmup: { duration: "15min", pace: easyPace, description: "Footing + 4 accélérations" },
-              main: [
-                { description: "2 × 15min @ allure objectif", duration: "30min", pace: tempoPace },
-                { description: "Récupération : 3min trot", duration: "3min", pace: easyPace },
-              ],
-              cooldown: { duration: "10min", pace: easyPace, description: "Retour au calme" },
-              notes: "Allure cible de votre objectif. Mémorisez les sensations.",
-            },
-        footingLib
-          ? buildSessionFromLibrary(footingLib, Math.round(kmPerSession * 0.6), paces, "FOOTING")
-          : {
-              type: "EF", title: "Footing récupération",
-              duration: `${Math.round(kmPerSession * 0.6 * 5.5)}min`,
-              distance: Math.round(kmPerSession * 0.6),
-              warmup: { duration: "—", pace: "—", description: "—" },
-              main: [{ description: "Footing très facile", duration: `${Math.round(kmPerSession * 0.6 * 5.5)}min`, pace: easyPace }],
-              cooldown: { duration: "5min", pace: "—", description: "Étirements" },
-              notes: "Récupération impérative après le tempo.",
-            },
-        slLib
-          ? buildSessionFromLibrary(slLib, Math.round(kmPerSession * 1.9), paces, "SORTIE_LONGUE")
-          : {
-              type: "SL", title: "Sortie longue spécifique",
-              duration: `${Math.round(kmPerSession * 1.9 * 5.5)}min`,
-              distance: Math.round(kmPerSession * 1.9),
-              warmup: { duration: "—", pace: "—", description: "—" },
-              main: [
-                { description: "Première partie en endurance", duration: `${Math.round(kmPerSession * 0.8 * 5.5)}min`, pace: easyPace },
-                { description: "Bloc @ allure objectif", duration: `${Math.round(kmPerSession * 0.8 * 5.5)}min`, pace: tempoPace },
-                { description: "Retour en endurance", duration: `${Math.round(kmPerSession * 0.3 * 5.5)}min`, pace: easyPace },
-              ],
-              cooldown: { duration: "10min", pace: easyPace, description: "Marche + étirements" },
-              notes: "Séance clé. Simule les conditions de course sur fatigue.",
-            },
-      ];
-      if (sessionsPerWeek >= 4) {
-        sessions.push({
-          type: "EF", title: "Décrassage",
-          duration: `${Math.round(kmPerSession * 0.4 * 5.5)}min`,
-          distance: Math.round(kmPerSession * 0.4),
-          warmup: { duration: "—", pace: "—", description: "—" },
-          main: [{ description: "Footing très léger", duration: `${Math.round(kmPerSession * 0.4 * 5.5)}min`, pace: easyPace }],
-          cooldown: { duration: "—", pace: "—", description: "Étirements complets" },
-          notes: "Repos complet si fatigue importante.",
-        });
-      }
-      if (sessionsPerWeek >= 5) {
-        const seuilLib = selectSession("SEUIL2", phase, weekInPhase, totalWeeksInPhase);
-        sessions.push(
-          seuilLib
-            ? buildSessionFromLibrary(seuilLib, Math.round(kmPerSession * 0.9), paces, "SEUIL2")
-            : {
-                type: "SEUIL", title: "Rappel seuil",
-                duration: `${Math.round(kmPerSession * 0.9 * 5)}min`,
-                distance: Math.round(kmPerSession * 0.9),
-                warmup: { duration: "15min", pace: easyPace, description: "Footing + gammes" },
-                main: [
-                  { description: "2 × 12min @ allure seuil", duration: "24min", pace: seuilPace },
-                  { description: "Récupération : 3min trot", duration: "3min", pace: easyPace },
-                ],
-                cooldown: { duration: "10min", pace: easyPace, description: "Retour au calme" },
-                notes: "Maintien de la capacité seuil en phase spécifique.",
-              }
-        );
-      }
-      if (sessionsPerWeek >= 6) {
-        sessions.push({
-          type: "EF", title: "Footing aérobie",
-          duration: `${Math.round(kmPerSession * 0.5 * 5.5)}min`,
-          distance: Math.round(kmPerSession * 0.5),
-          warmup: { duration: "—", pace: "—", description: "—" },
-          main: [{ description: "Footing facile", duration: `${Math.round(kmPerSession * 0.5 * 5.5)}min`, pace: easyPace }],
-          cooldown: { duration: "5min", pace: "—", description: "Étirements" },
-          notes: "Volume facile. Écoutez votre corps, cette semaine est intense.",
-        });
-      }
-    } else if (phase === "Affûtage") {
-      const footingLib = selectSession("FOOTING", phase, weekInPhase, totalWeeksInPhase);
-      const tempoLib = selectSession("TEMPO", phase, weekInPhase, totalWeeksInPhase);
-      sessions = [
-        footingLib
-          ? buildSessionFromLibrary(footingLib, Math.round(kmPerSession * 0.7), paces, "FOOTING")
-          : {
-              type: "EF", title: "Footing + rappels",
-              duration: `${Math.round(kmPerSession * 0.7 * 5.5)}min`,
-              distance: Math.round(kmPerSession * 0.7),
-              warmup: { duration: "10min", pace: easyPace, description: "Footing tranquille" },
-              main: [
-                { description: "Footing facile", duration: `${Math.round(kmPerSession * 0.5 * 5.5)}min`, pace: easyPace },
-                { description: "5 × 100m @ allure 5km", duration: "5min", pace: vmaPace },
-              ],
-              cooldown: { duration: "5min", pace: easyPace, description: "Trot léger" },
-              notes: "Garder les jambes vives sans accumuler de fatigue.",
-            },
-        tempoLib
-          ? buildSessionFromLibrary(tempoLib, Math.round(kmPerSession * 0.8), paces, "TEMPO")
-          : {
-              type: "TEMPO", title: "Rappel allure objectif",
-              duration: `${Math.round(kmPerSession * 0.8 * 5)}min`,
-              distance: Math.round(kmPerSession * 0.8),
-              warmup: { duration: "15min", pace: easyPace, description: "Footing + 3 accélérations" },
-              main: [
-                { description: "2 × 8min @ allure objectif", duration: "16min", pace: tempoPace },
-                { description: "Récupération : 3min trot", duration: "3min", pace: easyPace },
-              ],
-              cooldown: { duration: "10min", pace: easyPace, description: "Retour au calme" },
-              notes: "Dernière séance de qualité. Sensations, pas chrono.",
-            },
-        {
-          type: "EF", title: "Veille de course",
-          duration: `${Math.round(kmPerSession * 0.5 * 5.5)}min`,
-          distance: Math.round(kmPerSession * 0.5),
-          warmup: { duration: "—", pace: "—", description: "—" },
-          main: [
-            { description: "Footing très léger", duration: "15min", pace: easyPace },
-            { description: "3 × 30s @ allure course (activation)", duration: "5min", pace: tempoPace },
-          ],
-          cooldown: { duration: "5min", pace: "—", description: "Marche" },
-          notes: "Juste une activation. Couchez-vous tôt, hydratez-vous bien.",
-        },
-      ];
-      if (sessionsPerWeek >= 4) {
-        sessions.push({
-          type: "EF", title: "Footing léger",
-          duration: `${Math.round(kmPerSession * 0.4 * 5.5)}min`,
-          distance: Math.round(kmPerSession * 0.4),
-          warmup: { duration: "—", pace: "—", description: "—" },
-          main: [{ description: "Footing très facile", duration: `${Math.round(kmPerSession * 0.4 * 5.5)}min`, pace: easyPace }],
-          cooldown: { duration: "5min", pace: "—", description: "Étirements doux" },
-          notes: "Garder le rythme sans fatigue. Repos si besoin.",
-        });
-      }
-      if (sessionsPerWeek >= 5) {
-        sessions.push({
-          type: "RECUP", title: "Décrassage", duration: "25-30min",
-          distance: Math.round(kmPerSession * 0.3),
-          warmup: { duration: "—", pace: "—", description: "—" },
-          main: [{ description: "Trot très léger, récupération active", duration: "25min", pace: easyPace }],
-          cooldown: { duration: "5min", pace: "—", description: "Marche" },
-          notes: "Juste bouger les jambes. Aucune intensité.",
-        });
-      }
-      if (sessionsPerWeek >= 6) {
-        sessions.push({
-          type: "EF", title: "Footing activation", duration: "20-25min",
-          distance: Math.round(kmPerSession * 0.3),
-          warmup: { duration: "—", pace: "—", description: "—" },
-          main: [{ description: "Footing court + 3 × 20s vif", duration: "20min", pace: easyPace }],
-          cooldown: { duration: "5min", pace: "—", description: "Marche" },
-          notes: "Activation légère. La fraîcheur est la priorité absolue.",
-        });
-      }
-    }
-
-    // Smart session-to-day assignment
-    // Rules:
-    //   1. Sortie longue (SL) → preferably Sam or Dim
-    //   2. No two quality sessions (SEUIL/VMA/TEMPO) on adjacent days
-    //   3. No quality session the day before a long run
-    const QUALITY_TYPES = new Set(["SEUIL", "VMA", "TEMPO"]);
-    const sortedDays = [...trainingDays].sort((a, b) => (dayOffsets[a] || 0) - (dayOffsets[b] || 0));
-    const daySlots = sortedDays.map(d => ({ dayName: d, offset: dayOffsets[d] || 0, session: null }));
-
-    // Step 1: Place SL on weekend (Sam/Dim) if available
-    const slSessions = sessions.filter(s => s.type === "SL");
-    const otherSessions = sessions.filter(s => s.type !== "SL");
-    const weekendSlots = daySlots.filter(d => d.dayName === "Sam" || d.dayName === "Dim");
-    const nonWeekendSlots = daySlots.filter(d => d.dayName !== "Sam" && d.dayName !== "Dim");
-
-    slSessions.forEach(sl => {
-      const free = weekendSlots.find(d => !d.session);
-      if (free) {
-        free.session = sl;
-      } else {
-        // Fallback: place on last available slot
-        const fallback = [...daySlots].reverse().find(d => !d.session);
-        if (fallback) fallback.session = sl;
-      }
+    // ── Step 2: Resolve each slot to a concrete session ──
+    let sessions = slots.map(slot => {
+      const targetKm = slot.volumePct > 0
+        ? Math.round(volume * slot.volumePct)
+        : Math.round(volume / sessionsPerWeek);
+      return resolveSlot(slot, phase, ratio, paces, weekInPhase, totalWeeksInPhase, targetKm);
     });
 
-    // Step 2: Place quality sessions with spacing constraints
-    const qualitySessions = otherSessions.filter(s => QUALITY_TYPES.has(s.type));
-    const easySessions = otherSessions.filter(s => !QUALITY_TYPES.has(s.type));
+    // ── Step 3: Distribute volume ──
+    distributeVolume(sessions, slots, volume, distance);
 
-    const emptySlots = () => daySlots.filter(d => !d.session);
-    const isAdjacentToQualityOrSL = (slot) => {
-      return daySlots.some(d => d.session &&
-        (QUALITY_TYPES.has(d.session.type) || d.session.type === "SL") &&
-        Math.abs(d.offset - slot.offset) === 1
-      );
-    };
-
-    qualitySessions.forEach(qs => {
-      // Prefer slot not adjacent to another quality/SL session
-      const safe = emptySlots().find(d => !isAdjacentToQualityOrSL(d));
-      if (safe) {
-        safe.session = qs;
-      } else {
-        const fallback = emptySlots()[0];
-        if (fallback) fallback.session = qs;
-      }
-    });
-
-    // Step 3: Fill remaining with easy sessions
-    easySessions.forEach(es => {
-      const slot = emptySlots()[0];
-      if (slot) slot.session = es;
-    });
+    // ── Step 4: Assign to days ──
+    const daySlots = assignToDays(sessions, slots, trainingDays);
 
     // Build final session list with dates
     sessions = daySlots
@@ -475,33 +385,31 @@ export function generateWeeklyPlan(plan, availability, paces, startDate) {
         };
       });
 
-    // Already sorted chronologically since daySlots was sorted
-
     // Adjust for assimilation weeks
     if (isAssim) {
       sessions = sessions.map(s => ({
         ...s,
-        distance: Math.round(s.distance * 0.75),
+        distance: Math.round((typeof s.distance === 'number' ? s.distance : s.distance?.low || 0) * 0.75),
         notes: (s.notes || "") + " Semaine allégée : écoutez votre corps.",
       }));
     }
 
     // Convert session distances to ranges: base → base to base+1
     sessions = sessions.map(s => {
-      const base = s.distance;
+      const base = typeof s.distance === 'number' ? s.distance : (s.distance?.low || 0);
       return {
         ...s,
         distance: { low: Math.max(1, base), high: Math.max(1, base + 1) },
       };
     });
 
-    // Weekly range: min(5km, 10% of total) spread
+    // Weekly range
     const totalBase = sessions.reduce((sum, s) => sum + s.distance.low, 0);
     const weekSpread = Math.min(5, Math.round(totalBase * 0.1));
     const totalLow = totalBase;
     const totalHigh = totalBase + weekSpread;
 
-    // Build full week with rest days (Mon→Sun)
+    // Build full week with rest days
     const allDayNames = ["Lun", "Mar", "Mer", "Jeu", "Ven", "Sam", "Dim"];
     const trainingDayOffsets = new Set(sessions.map(s => s.dayOffset));
     const fullWeek = [];

@@ -442,6 +442,62 @@ function buildDurationStr(entry) {
   return "—";
 }
 
+// ── RPE shim for V2 intensity ────────────────────────────────────────
+// Maps old library level (1/2/3) → approximate RPE by session type.
+// This allows the V2 algo to request sessions by RPE even with the
+// current level-based library. Will be removed when new RPE-native
+// library is integrated.
+
+const LEVEL_TO_RPE = {
+  VMA_COURTE:    { 1: 6, 2: 7, 3: 8 },
+  VMA_LONGUE:    { 1: 6, 2: 7, 3: 8 },
+  SEUIL2:        { 1: 5, 2: 6, 3: 7 },
+  TEMPO:         { 1: 5, 2: 6, 3: 7 },
+  SORTIE_LONGUE: { 1: 3, 2: 5, 3: 7 },
+  FOOTING:       { 1: 2, 2: 3, 3: 4 },
+};
+
+/**
+ * Select a session from the library by RPE proximity.
+ * Uses LEVEL_TO_RPE to map old level-based entries to approximate RPE.
+ *
+ * @param {string} sessionType - Library key (VMA_COURTE, SEUIL2, etc.)
+ * @param {string} phase - Training phase (Base, Construction, Spécifique, Affûtage)
+ * @param {number} targetRPE - Desired RPE (1-10)
+ * @returns {Object|null} - Library entry or null
+ */
+export function selectSessionByRPE(sessionType, phase, targetRPE) {
+  const library = SESSION_LIBRARY[sessionType];
+  if (!library) return null;
+
+  // FOOTING uses all_phases
+  let available = library[phase] || library.all_phases || [];
+  if (available.length === 0) {
+    // Fallback: try all_phases if phase-specific not found
+    available = library.all_phases || [];
+  }
+  if (available.length === 0) return null;
+
+  const rpeMap = LEVEL_TO_RPE[sessionType] || {};
+
+  // Map each entry to an approximate RPE, pick closest to targetRPE
+  let best = null;
+  let bestDelta = Infinity;
+
+  for (const entry of available) {
+    const entryRPE = entry.rpe || rpeMap[entry.level] || (entry.level * 3); // fallback
+    const delta = Math.abs(entryRPE - targetRPE);
+    if (delta < bestDelta) {
+      bestDelta = delta;
+      best = entry;
+    }
+  }
+
+  return best;
+}
+
+// ── Helpers ──────────────────────────────────────────────────────────
+
 function estimateMainDuration(entry, targetDistanceKm, paces, sessionTypeKey) {
   const s = entry.structure;
 

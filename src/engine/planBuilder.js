@@ -24,7 +24,7 @@ export function buildPlan(startDate, objectives, onboarding) {
     endDate.setDate(endDate.getDate() + 24 * 7);
     const totalWeeks = Math.floor((endDate - startDate) / (7 * 86400000));
 
-    const phases = allocatePhases(totalWeeks, "10km", 50, true, totalWeeks);
+    const phases = allocatePhases(totalWeeks, "10km", annualAvg, true, totalWeeks);
     phases.specific = 0;
     phases.taper = 0;
     phases.taperType = "none";
@@ -92,9 +92,7 @@ export function buildPlan(startDate, objectives, onboarding) {
     const objDate = new Date(obj.date);
     const cycleWeeks = Math.floor((objDate - cycleStart) / (7 * 86400000));
     const isFirst = (i === 0);
-    const estimatedSpecificVol = currentStartingVolume * 1.4;
-
-    const phases = allocatePhases(cycleWeeks, obj.distance, estimatedSpecificVol, isFirst, totalPlanWeeks);
+    const phases = allocatePhases(cycleWeeks, obj.distance, annualAvg, isFirst, totalPlanWeeks);
     const volumeSchedule = computeVolumeSchedule(phases, currentStartingVolume, annualAvg, parseFloat(onboarding.avg4wKm) || 40);
 
     if (volumeSchedule.length > 0) {

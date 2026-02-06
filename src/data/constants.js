@@ -43,7 +43,39 @@ export const MIN_WEEKS_BEFORE_PRIO = 8;
 export const MIN_WEEKS_BETWEEN_PRIO = 8;
 export const ABSOLUTE_CAP = 210;
 export const CEILING_GROWTH_RATE = 0.03; // +3%/week once global ceiling is reached
-export const DISTANCE_MIN_CEILING = { "5km": 40, "10km": 40, "Semi Marathon": 50, "Marathon": 65 };
+export const DISTANCE_MIN_CEILING = { "5km": 40, "10km": 40, "Semi Marathon": 45, "Marathon": 55 };
+
+// ── V2 Volume constants ─────────────────────────────────────────────
+
+// Max SL distance per target race
+export const SL_MAX_KM = { "5km": 22, "10km": 22, "Semi Marathon": 30, "Marathon": 36 };
+
+// Tiered cap factors: how much above reference volume we allow
+export const VOLUME_CAP_FACTORS = [
+  { threshold: 30,       factor: 1.00 },
+  { threshold: 50,       factor: 0.75 },
+  { threshold: 70,       factor: 0.50 },
+  { threshold: 100,      factor: 0.30 },
+  { threshold: 150,      factor: 0.20 },
+  { threshold: Infinity, factor: 0.20 },
+];
+
+// Taper week-by-week volume multipliers per distance
+export const TAPER_PROFILES = {
+  "5km":           [0.75],
+  "10km":          [0.75],
+  "Semi Marathon": [0.70, 0.60],
+  "Marathon_low":  [0.70, 0.50],
+  "Marathon_high": [0.75, 0.65, 0.50],
+};
+
+// Volume distribution percentages per session role
+export const VOLUME_DISTRIBUTION = {
+  SL_PCT:           0.30,
+  QUALITY_HIGH_PCT: 0.20,
+  QUALITY_LOW_PCT:  0.15,
+  RECUP_PCT:        0.10,
+};
 
 // ── Phase display ─────────────────────────────────────────────────
 
@@ -70,7 +102,7 @@ export const PHASE_DESCRIPTIONS = {
   "Spécifique": {
     title: "Spécifique",
     subtitle: "Affûter pour la distance cible",
-    desc: "Séances aux allures de course. Volume stabilisé ou en légère hausse (+5%). Intensité maximale ciblée sur la distance objectif. Dernière ligne droite avant l'affûtage.",
+    desc: "Séances aux allures de course. Volume en plateau au cap atteint en Construction. Intensité maximale ciblée sur la distance objectif. Dernière ligne droite avant l'affûtage.",
     icon: "▩",
   },
   "Affûtage": {
