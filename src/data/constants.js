@@ -73,6 +73,11 @@ export const TAPER_PROFILES = {
 // Minimum recommended peak volume per race distance (for warnings)
 export const DISTANCE_MIN_VOLUME = { "5km": 25, "10km": 35, "Semi Marathon": 40, "Marathon": 50 };
 
+// Maximum useful peak volume per race distance (caps the global ceiling).
+// Prevents over-training for shorter distances even if tiered factor allows more.
+// These are the max volumes that make physiological sense for each distance.
+export const DISTANCE_MAX_CEILING = { "5km": 50, "10km": 65, "Semi Marathon": 70, "Marathon": 150 };
+
 // Volume distribution percentages per session role
 export const VOLUME_DISTRIBUTION = {
   SL_PCT:           0.30,

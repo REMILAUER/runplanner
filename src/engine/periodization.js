@@ -7,6 +7,7 @@ import {
   ABSOLUTE_CAP, CEILING_GROWTH_RATE, DISTANCE_MIN_CEILING,
   SPECIFIC_MAX_WEEKS, CONSTRUCTION_PREREQ,
   VOLUME_CAP_FACTORS, TAPER_PROFILES, DISTANCE_MIN_VOLUME,
+  DISTANCE_MAX_CEILING,
 } from '../data/constants';
 
 // ── Unchanged from V1 ──────────────────────────────────────────────
@@ -46,8 +47,15 @@ export function computeGlobalCeiling(annualAvg, distance) {
   const ref = Math.max(annualAvg, 20);
   const factor = getCapFactor(ref);
   let ceiling = ref * (1 + factor);
+  // Floor: minimum useful volume for the distance
   if (distance && DISTANCE_MIN_CEILING[distance]) {
     ceiling = Math.max(ceiling, DISTANCE_MIN_CEILING[distance]);
+  }
+  // Cap: maximum useful volume for the distance (prevents over-training for short races).
+  // Never cap below the runner's current ref volume — this only limits GROWTH.
+  if (distance && DISTANCE_MAX_CEILING && DISTANCE_MAX_CEILING[distance]) {
+    const distMax = Math.max(DISTANCE_MAX_CEILING[distance], ref);
+    ceiling = Math.min(ceiling, distMax);
   }
   return Math.min(ceiling, ABSOLUTE_CAP);
 }
