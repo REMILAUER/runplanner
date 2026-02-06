@@ -48,7 +48,7 @@ export default function App() {
   const [activePlanId, setActivePlanId] = useState(localData?.activePlanId || null);
   const [dataLoading, setDataLoading] = useState(false);
   const [chatOpen, setChatOpen] = useState(false);
-  const [saveStatus, setSaveStatus] = useState(null); // null | 'saving' | 'saved' | 'error'
+  const [saveError, setSaveError] = useState(false);
 
   // Memoize coach context for the AI chat
   const coachContext = useMemo(() => {
@@ -187,10 +187,8 @@ export default function App() {
   useEffect(() => {
     if (!pacesInitialized.current) { pacesInitialized.current = true; return; }
     if (supabaseConfigured && userId && activePlanId && paces) {
-      setSaveStatus('saving');
       storage.updatePlan(activePlanId, { paces })
-        .then(() => { setSaveStatus('saved'); setTimeout(() => setSaveStatus(null), 2000); })
-        .catch(() => { setSaveStatus('error'); setTimeout(() => setSaveStatus(null), 3000); });
+        .catch(() => { setSaveError(true); setTimeout(() => setSaveError(false), 4000); });
     }
   }, [paces, activePlanId, userId, supabaseConfigured]);
 
@@ -262,7 +260,6 @@ export default function App() {
 
     // Persist to normalized DB (async, non-blocking for UI)
     if (supabaseConfigured && userId) {
-      setSaveStatus('saving');
       try {
         // Save profile (merged)
         await storage.saveProfile(userId, {
@@ -307,12 +304,10 @@ export default function App() {
             await storage.saveGeneratedPlan(cycleIds[0], dbWeeks);
           }
         }
-        setSaveStatus('saved');
-        setTimeout(() => setSaveStatus(null), 2000);
       } catch (err) {
         console.warn('[App] DB persist error (non-blocking):', err.message);
-        setSaveStatus('error');
-        setTimeout(() => setSaveStatus(null), 3000);
+        setSaveError(true);
+        setTimeout(() => setSaveError(false), 4000);
       }
     }
   };
@@ -424,18 +419,14 @@ export default function App() {
           accessToken={session?.access_token}
         />
       )}
-      {/* Save status indicator */}
-      {saveStatus && (
+      {/* Save error indicator */}
+      {saveError && (
         <div style={{
           position: 'fixed', bottom: 60, left: '50%', transform: 'translateX(-50%)',
           padding: '6px 14px', borderRadius: 2, fontSize: 11, fontFamily: FONT, zIndex: 100,
-          background: saveStatus === 'error' ? '#c00' : '#1a1a1a',
-          color: '#fff', opacity: saveStatus === 'saving' ? 0.7 : 1,
-          transition: 'opacity 0.2s',
+          background: '#c00', color: '#fff',
         }}>
-          {saveStatus === 'saving' && 'Sauvegarde...'}
-          {saveStatus === 'saved' && 'Sauvegardé'}
-          {saveStatus === 'error' && 'Erreur de sauvegarde'}
+          Erreur de sauvegarde
         </div>
       )}
       <div style={s.nav}>
