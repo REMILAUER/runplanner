@@ -6,7 +6,7 @@
 import {
   ABSOLUTE_CAP, CEILING_GROWTH_RATE, DISTANCE_MIN_CEILING,
   SPECIFIC_MAX_WEEKS, CONSTRUCTION_PREREQ,
-  VOLUME_CAP_FACTORS, TAPER_PROFILES,
+  VOLUME_CAP_FACTORS, TAPER_PROFILES, DISTANCE_MIN_VOLUME,
 } from '../data/constants';
 
 // ── Unchanged from V1 ──────────────────────────────────────────────
@@ -196,6 +196,52 @@ export function allocatePhases(totalWeeks, distance, annualAvg, isFirstCycle = t
   const totalAllocated = result.base + result.construction + result.specific + result.taper;
   if (totalAllocated !== totalWeeks) {
     result.warnings.push(`Allocation mismatch: ${totalAllocated} vs ${totalWeeks} semaines.`);
+  }
+
+  // Estimate reachable peak volume and warn if insufficient for distance.
+  // Full simulation of the V2 growth algorithm including assimilation ramp-backs.
+  if (DISTANCE_MIN_VOLUME && DISTANCE_MIN_VOLUME[distance]) {
+    const minRequired = DISTANCE_MIN_VOLUME[distance];
+
+    let simVol = annualAvg;
+    let simRamp = 0; // 0=normal, 1=post-assim ramp-1, 2=post-assim ramp-2
+    let simPreAssim = null;
+    const simBaseCap = Math.min(
+      annualAvg + (volumeCap - annualAvg) * 0.5,
+      volumeCap
+    );
+
+    function simPhase(weeks, cap, assimList) {
+      for (let i = 0; i < weeks; i++) {
+        const isAssim = assimList.includes(i + 1);
+        if (isAssim) {
+          simPreAssim = simVol;
+          simRamp = 1;
+        } else if (simRamp === 1) {
+          simVol = Math.min(simPreAssim * 0.95, cap, ABSOLUTE_CAP);
+          simRamp = 2;
+        } else if (simRamp === 2) {
+          simVol = Math.min(simPreAssim, cap, ABSOLUTE_CAP);
+          simRamp = 0;
+        } else {
+          const inc = simVol >= cap
+            ? simVol * CEILING_GROWTH_RATE
+            : clamp(simVol * 0.10, 3, 10);
+          simVol = Math.min(simVol + inc, cap, ABSOLUTE_CAP);
+        }
+      }
+    }
+
+    simPhase(result.base, simBaseCap, result.baseAssimilations);
+    simPhase(result.construction, volumeCap, result.constructionAssimilations);
+    // Specific is plateau — tiny drift only
+    const estimatedPeak = Math.round(simVol);
+
+    if (estimatedPeak < minRequired) {
+      result.warnings.push(
+        `Volume estimé ~${estimatedPeak}km/sem, insuffisant pour ${distance} (minimum recommandé : ${minRequired}km/sem). Prévoyez plus de semaines ou augmentez votre volume de base.`
+      );
+    }
   }
 
   return result;

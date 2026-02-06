@@ -61,13 +61,17 @@ export const VOLUME_CAP_FACTORS = [
 ];
 
 // Taper week-by-week volume multipliers per distance
+// Designed to avoid detraining: max drop ~35-40% from peak
 export const TAPER_PROFILES = {
-  "5km":           [0.75],
-  "10km":          [0.75],
-  "Semi Marathon": [0.70, 0.60],
-  "Marathon_low":  [0.70, 0.50],
-  "Marathon_high": [0.75, 0.65, 0.50],
+  "5km":           [0.80],
+  "10km":          [0.80],
+  "Semi Marathon": [0.80, 0.65],
+  "Marathon_low":  [0.80, 0.65],
+  "Marathon_high": [0.80, 0.70, 0.60],
 };
+
+// Minimum recommended peak volume per race distance (for warnings)
+export const DISTANCE_MIN_VOLUME = { "5km": 25, "10km": 35, "Semi Marathon": 40, "Marathon": 50 };
 
 // Volume distribution percentages per session role
 export const VOLUME_DISTRIBUTION = {
