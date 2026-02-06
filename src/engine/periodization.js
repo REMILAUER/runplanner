@@ -169,20 +169,11 @@ export function allocatePhases(totalWeeks, distance, annualAvg, isFirstCycle = t
   // Adaptive: 3:1 pattern if volumeCap < 50, 4:1 if ≥ 50
   const assimCycle = volumeCap < 50 ? 3 : 4;
 
-  // Base assimilations — last week of base is always assimilation
+  // Base assimilations — only last week of base is assimilation.
+  // Base is short (3-6 weeks) and focused on building volume, so we
+  // don't interrupt with intermediate assimilations.
   if (baseWeeks > 0) {
-    const baseAssim = [];
-    // For base, mark last week as assimilation
-    baseAssim.push(baseWeeks);
-    // If base is long enough for an intermediate assimilation
-    if (baseWeeks > assimCycle + 1) {
-      let w = assimCycle;
-      while (w < baseWeeks) {
-        if (!baseAssim.includes(w)) baseAssim.push(w);
-        w += assimCycle;
-      }
-    }
-    result.baseAssimilations = baseAssim.sort((a, b) => a - b);
+    result.baseAssimilations = [baseWeeks];
   }
 
   // Construction assimilations
@@ -256,12 +247,12 @@ export function computeVolumeSchedule(phases, startingVolume, annualAvg, avg4w) 
       vol = currentVol * 0.75;
       rampState = 1;
     } else if (rampState === 1) {
-      // First week after assimilation: 92% of pre-assimilation volume
-      vol = preAssimVol * 0.92;
+      // Week after assimilation: ramp back to pre-assimilation volume
+      vol = preAssimVol * 0.95;
       vol = Math.min(vol, cap, ABSOLUTE_CAP);
       rampState = 2;
     } else if (rampState === 2) {
-      // Second week: back to pre-assimilation volume
+      // Second week: resume normal progression from pre-assimilation level
       vol = preAssimVol;
       vol = Math.min(vol, cap, ABSOLUTE_CAP);
       rampState = 0;
@@ -272,6 +263,13 @@ export function computeVolumeSchedule(phases, startingVolume, annualAvg, avg4w) 
   }
 
   // ── BASE ──
+  // Base cap: climb towards an intermediate target between startingVolume and volumeCap.
+  // When annualAvg ≈ startingVolume (runner at their usual level), Base must still
+  // progress to set up Construction for reaching volumeCap.
+  // baseCap = midpoint between max(annualAvg, startingVolume) and volumeCap
+  const baseTarget = Math.max(annualAvg, startingVolume);
+  const baseCap = Math.min(baseTarget + (volumeCap - baseTarget) * 0.5, volumeCap);
+
   const baseWeeks = phases.base;
   const baseAssimSet = new Set(phases.baseAssimilations || []);
 
@@ -281,13 +279,13 @@ export function computeVolumeSchedule(phases, startingVolume, annualAvg, avg4w) 
     let vol;
 
     if (isAssim || rampState > 0) {
-      const inc = computeIncrement(currentVol, annualAvg);
+      const inc = computeIncrement(currentVol, baseCap);
       vol = currentVol + inc;
-      vol = handleWeek(vol, annualAvg, isAssim);
+      vol = handleWeek(vol, baseCap, isAssim);
     } else {
-      const inc = computeIncrement(currentVol, annualAvg);
+      const inc = computeIncrement(currentVol, baseCap);
       vol = currentVol + inc;
-      vol = Math.min(vol, annualAvg, ABSOLUTE_CAP);
+      vol = Math.min(vol, baseCap, ABSOLUTE_CAP);
     }
 
     vol = Math.round(vol * 10) / 10;
