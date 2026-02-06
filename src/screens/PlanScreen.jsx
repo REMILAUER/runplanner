@@ -3,6 +3,7 @@ import { FONT } from '../styles/tokens';
 import { s } from '../styles/styles';
 import { PHASE_COLORS, PHASE_DESCRIPTIONS, SESSION_TYPES } from '../data/constants';
 import { generateWeeklyPlan, fmtDist } from '../engine/weekGenerator';
+import { ensureDates } from '../engine/weekHydrator';
 import { generatePlanPDF } from '../engine/pdfExport';
 import WeekVolumeBar from '../components/plan/WeekVolumeBar';
 import SessionDetailModal from '../components/plan/SessionDetailModal';
@@ -16,7 +17,7 @@ export default function PlanScreen({ plan, paces, profile, availability, weeklyP
   // Use pre-computed weeklyPlan from prop if available, otherwise compute on-the-fly (fallback)
   const weeklyPlan = useMemo(() => {
     if (weeklyPlanProp && Array.isArray(weeklyPlanProp) && weeklyPlanProp.length > 0) {
-      return weeklyPlanProp;
+      return ensureDates(weeklyPlanProp);
     }
     // Fallback: compute on-the-fly (backward compat / no DB)
     const now = new Date();

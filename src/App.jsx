@@ -5,6 +5,7 @@ import { FONT, colors } from './styles/tokens';
 import { parseTimeToSeconds, computeVDOT, computeAllPaces } from './engine/vdot';
 import { buildPlan } from './engine/planBuilder';
 import { generateAndPersistPlan } from './engine/weekGenerator';
+import { hydrateWeeksFromDb } from './engine/weekHydrator';
 import { buildCoachContext } from './engine/coachContext';
 import { storage } from './services/storage';
 import { useAuth } from './context/AuthContext';
@@ -112,7 +113,7 @@ export default function App() {
             const dbWeeks = await storage.loadWeeksForCycle(planData.cycles[0].id);
             if (cancelled) return;
             if (dbWeeks && dbWeeks.length > 0) {
-              setWeeklyPlan(dbWeeks);
+              setWeeklyPlan(hydrateWeeksFromDb(dbWeeks));
             }
           }
 
