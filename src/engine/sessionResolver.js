@@ -33,6 +33,8 @@ const TYPE_MAP = {
   TEMPO: "TEMPO",
   SORTIE_LONGUE: "SL",
   FOOTING: "EF",
+  SPECIFIQUE: "SEUIL",
+  MOBILITE: "PPG",
 };
 
 // Map library session types to their primary pace zone
@@ -43,12 +45,17 @@ const PACE_ZONE_MAP = {
   TEMPO: "Tempo",
   SORTIE_LONGUE: "Easy",
   FOOTING: "Easy",
+  SPECIFIQUE: "Seuil2",
+  MOBILITE: "Easy",
 };
 
 // ── selectSession ────────────────────────────────────────────────────
 
 /**
  * Select a session from the library based on type, phase, and progression.
+ * V2: library is now flat arrays sorted by RPE. We compute a target RPE
+ * from the progression ratio and pick the closest session.
+ *
  * @param {string} sessionType - Library key (VMA_COURTE, SEUIL2, etc.)
  * @param {string} phase - Training phase (Base, Construction, Spécifique, Affûtage)
  * @param {number} weekInPhase - Current week number within phase (1-based)
@@ -56,32 +63,27 @@ const PACE_ZONE_MAP = {
  * @returns {Object|null} - Library entry or null
  */
 export function selectSession(sessionType, phase, weekInPhase, totalWeeksInPhase) {
-  const library = SESSION_LIBRARY[sessionType];
-  if (!library) return null;
+  const available = SESSION_LIBRARY[sessionType];
+  if (!available || !Array.isArray(available) || available.length === 0) return null;
 
-  // FOOTING uses all_phases
-  let available = library[phase] || library.all_phases || [];
-  if (available.length === 0) return null;
-
-  // Sort by level
-  available = [...available].sort((a, b) => a.level - b.level);
-
-  // Compute target level based on progression ratio
-  const maxLevel = Math.max(...available.map(s => s.level));
+  // Compute progression ratio → target RPE
   const ratio = totalWeeksInPhase > 0 ? weekInPhase / totalWeeksInPhase : 0.5;
-  const targetLevel = Math.max(1, Math.ceil(ratio * maxLevel));
+  const minRPE = Math.min(...available.map(s => s.rpe));
+  const maxRPE = Math.max(...available.map(s => s.rpe));
+  const targetRPE = minRPE + ratio * (maxRPE - minRPE);
 
-  // Find exact match
-  let selected = available.find(s => s.level === targetLevel);
-
-  // Fallback: closest level
-  if (!selected) {
-    selected = available.reduce((prev, curr) =>
-      Math.abs(curr.level - targetLevel) < Math.abs(prev.level - targetLevel) ? curr : prev
-    );
+  // Find closest RPE
+  let best = null;
+  let bestDelta = Infinity;
+  for (const entry of available) {
+    const delta = Math.abs(entry.rpe - targetRPE);
+    if (delta < bestDelta) {
+      bestDelta = delta;
+      best = entry;
+    }
   }
 
-  return selected;
+  return best;
 }
 
 // ── buildSessionFromLibrary ──────────────────────────────────────────
@@ -120,13 +122,12 @@ export function buildSessionFromLibrary(entry, targetDistanceKm, paces, sessionT
 
   // ── SORTIE LONGUE ──
   if (sessionTypeKey === "SORTIE_LONGUE") {
-    const zones = entry.pace_zones || ["Easy"];
-    const dist = entry.distribution;
-
-    if (dist && dist.length === zones.length) {
-      // Distribution-based: compute real km & time per zone
-      zones.forEach((zone, i) => {
-        const pct = dist[i] || 0;
+    // V2 structure: { type: "segments", segments: [{ fraction, pace_zone }] }
+    const s = entry.structure;
+    if (s && s.type === "segments" && Array.isArray(s.segments)) {
+      s.segments.forEach((seg) => {
+        const zone = seg.pace_zone || "Easy";
+        const pct = seg.fraction || 0;
         const km = Math.round(targetDistanceKm * pct * 10) / 10;
         const min = distToMin(km, zone);
         mainBlocks.push({
@@ -135,29 +136,24 @@ export function buildSessionFromLibrary(entry, targetDistanceKm, paces, sessionT
           pace: getPaceStr(paces, zone),
         });
       });
-    } else if (Array.isArray(entry.structure)) {
-      // Structure array like ["easy_40%", "tempo_40%", "easy_20%"]
-      entry.structure.forEach((block, i) => {
-        const zone = zones[i] || "Easy";
-        // Parse percentage from string like "easy_40%"
-        const pctMatch = typeof block === "string" && block.match(/(\d+)%/);
-        const pct = pctMatch ? parseInt(pctMatch[1]) / 100 : 1 / entry.structure.length;
-        const km = Math.round(targetDistanceKm * pct * 10) / 10;
-        const min = distToMin(km, zone);
-        const label = typeof block === "string" ? block.replace(/_/g, " ") : `Bloc ${i + 1}`;
+    } else if (s && s.type === "duration_blocks" && Array.isArray(s.blocks)) {
+      // V2: fixed duration blocks in minutes { duration_min, pace_zone }
+      s.blocks.forEach((block) => {
+        const zone = block.pace_zone || "Easy";
         mainBlocks.push({
-          description: `${label} (~${km}km)`,
-          duration: `~${fmtMin(min)}`,
+          description: `${block.duration_min}min en ${zone.toLowerCase()}`,
+          duration: fmtMin(block.duration_min),
           pace: getPaceStr(paces, zone),
         });
       });
     } else {
-      // Simple SL (single zone or fartlek string)
-      const totalMin = distToMin(targetDistanceKm, zones[0]);
+      // Fallback: simple SL
+      const primaryZone = (entry.zones && entry.zones[0]) || "Easy";
+      const totalMin = distToMin(targetDistanceKm, primaryZone);
       mainBlocks.push({
         description: entry.description,
         duration: fmtMin(totalMin),
-        pace: getPaceStr(paces, zones[0]),
+        pace: getPaceStr(paces, primaryZone),
       });
     }
   }
@@ -311,17 +307,19 @@ export function buildSessionFromLibrary(entry, targetDistanceKm, paces, sessionT
         description: `Pyramid: ${segments.join('-')}${s.segments ? 'm' : 's'}. ${entry.recovery_desc || ''}`,
       });
     }
-    // Mixed format
+    // Mixed format (V2: segments may have pace_zone per segment)
     else if (s.type === "mixed" && s.segments) {
       s.segments.forEach((seg, i) => {
+        const segZone = seg.pace_zone || mainPaceZone;
+        const segPaceData = paces?.[segZone];
         _dbSteps.push({
           sortOrder: stepOrder++,
           stepType: "main",
           distanceM: seg.distance_m || null,
           durationSec: seg.duration_sec || null,
-          paceZone: mainPaceZone,
-          paceMinSecKm: mainPaceData?.fast || null,
-          paceMaxSecKm: mainPaceData?.slow || null,
+          paceZone: segZone,
+          paceMinSecKm: segPaceData?.fast || mainPaceData?.fast || null,
+          paceMaxSecKm: segPaceData?.slow || mainPaceData?.slow || null,
           recoveryDurationSec: seg.recovery_sec || null,
           recoveryType: s.recovery_type || "jog",
           label: `Segment ${i + 1}`,
@@ -434,58 +432,41 @@ function buildDurationStr(entry) {
     return `${Math.round((effort + recov) / 60)}min`;
   }
 
-  // Mixed format
+  // Mixed format (V2: segments have duration_sec)
   if (s.type === "mixed" && s.segments) {
+    let total = 0;
+    for (const seg of s.segments) {
+      total += seg.duration_sec || 0;
+      total += seg.recovery_sec || 0;
+    }
+    if (total > 0) return `${Math.round(total / 60)}min`;
     return `${s.segments.length} fractions`;
   }
 
   return "—";
 }
 
-// ── RPE shim for V2 intensity ────────────────────────────────────────
-// Maps old library level (1/2/3) → approximate RPE by session type.
-// This allows the V2 algo to request sessions by RPE even with the
-// current level-based library. Will be removed when new RPE-native
-// library is integrated.
-
-const LEVEL_TO_RPE = {
-  VMA_COURTE:    { 1: 6, 2: 7, 3: 8 },
-  VMA_LONGUE:    { 1: 6, 2: 7, 3: 8 },
-  SEUIL2:        { 1: 5, 2: 6, 3: 7 },
-  TEMPO:         { 1: 5, 2: 6, 3: 7 },
-  SORTIE_LONGUE: { 1: 3, 2: 5, 3: 7 },
-  FOOTING:       { 1: 2, 2: 3, 3: 4 },
-};
+// ── RPE-based session selection (V2 native) ────────────────────────────
 
 /**
  * Select a session from the library by RPE proximity.
- * Uses LEVEL_TO_RPE to map old level-based entries to approximate RPE.
+ * V2: library is now flat arrays with native RPE field on each session.
  *
  * @param {string} sessionType - Library key (VMA_COURTE, SEUIL2, etc.)
- * @param {string} phase - Training phase (Base, Construction, Spécifique, Affûtage)
+ * @param {string} phase - Training phase (unused in V2, kept for backward compat)
  * @param {number} targetRPE - Desired RPE (1-10)
  * @returns {Object|null} - Library entry or null
  */
 export function selectSessionByRPE(sessionType, phase, targetRPE) {
-  const library = SESSION_LIBRARY[sessionType];
-  if (!library) return null;
+  const available = SESSION_LIBRARY[sessionType];
+  if (!available || !Array.isArray(available) || available.length === 0) return null;
 
-  // FOOTING uses all_phases
-  let available = library[phase] || library.all_phases || [];
-  if (available.length === 0) {
-    // Fallback: try all_phases if phase-specific not found
-    available = library.all_phases || [];
-  }
-  if (available.length === 0) return null;
-
-  const rpeMap = LEVEL_TO_RPE[sessionType] || {};
-
-  // Map each entry to an approximate RPE, pick closest to targetRPE
+  // Pick session with closest RPE to target
   let best = null;
   let bestDelta = Infinity;
 
   for (const entry of available) {
-    const entryRPE = entry.rpe || rpeMap[entry.level] || (entry.level * 3); // fallback
+    const entryRPE = entry.rpe || 5; // fallback
     const delta = Math.abs(entryRPE - targetRPE);
     if (delta < bestDelta) {
       bestDelta = delta;
@@ -505,20 +486,37 @@ function estimateMainDuration(entry, targetDistanceKm, paces, sessionTypeKey) {
   // Use targetDistanceKm × average pace when we know the distance
   if (targetDistanceKm && paces) {
     const isDistanceBased = sessionTypeKey === "SORTIE_LONGUE" || sessionTypeKey === "FOOTING";
-    const hasStructuredIntervals = s && (s.reps || s.sets || s.segments || s.segments_sec);
+    const hasStructuredIntervals = s && (s.reps || s.sets || (s.segments && s.type !== "segments"));
 
     if (isDistanceBased || !hasStructuredIntervals) {
-      // Compute average pace in sec/km from the session's pace zones
-      const zones = entry.pace_zones || ["Easy"];
-      const distribution = entry.distribution || zones.map(() => 1 / zones.length);
       let avgPaceSec = 0;
-      zones.forEach((zone, i) => {
-        const paceData = paces[zone];
-        if (paceData) {
-          const midPace = (paceData.slow + paceData.fast) / 2;
-          avgPaceSec += midPace * (distribution[i] || 0);
-        }
-      });
+
+      // V2: SL uses structure.segments with {fraction, pace_zone}
+      if (s && s.type === "segments" && Array.isArray(s.segments)) {
+        s.segments.forEach((seg) => {
+          const paceData = paces[seg.pace_zone || "Easy"];
+          if (paceData) {
+            avgPaceSec += ((paceData.slow + paceData.fast) / 2) * (seg.fraction || 0);
+          }
+        });
+      }
+      // V2: SL duration_blocks — sum fixed durations, return directly
+      else if (s && s.type === "duration_blocks" && Array.isArray(s.blocks)) {
+        return s.blocks.reduce((sum, b) => sum + (b.duration_min || 0), 0);
+      }
+      // Fallback: use entry.zones or entry.pace_zones (backward compat)
+      else {
+        const zones = entry.pace_zones || entry.zones || ["Easy"];
+        const distribution = entry.distribution || zones.map(() => 1 / zones.length);
+        zones.forEach((zone, i) => {
+          const paceData = paces[zone];
+          if (paceData) {
+            const midPace = (paceData.slow + paceData.fast) / 2;
+            avgPaceSec += midPace * (distribution[i] || 0);
+          }
+        });
+      }
+
       // Fallback if pace couldn't be computed
       if (avgPaceSec <= 0 && paces.Easy) {
         avgPaceSec = (paces.Easy.slow + paces.Easy.fast) / 2;
@@ -556,10 +554,18 @@ function estimateMainDuration(entry, targetDistanceKm, paces, sessionTypeKey) {
     return (effort + recov) / 60;
   }
 
-  // Mixed format
+  // Mixed format (V2: segments have duration_sec and/or distance_m)
   if (s.type === "mixed" && s.segments) {
-    const effort = s.segments.reduce((sum, seg) => sum + (seg.distance_m || 0) / 100 * 18, 0);
-    const recov = s.segments.reduce((sum, seg) => sum + (seg.recovery_sec || 0), 0);
+    let effort = 0;
+    let recov = 0;
+    for (const seg of s.segments) {
+      if (seg.duration_sec) {
+        effort += seg.duration_sec;
+      } else if (seg.distance_m) {
+        effort += (seg.distance_m / 100) * 18; // rough ~18s per 100m
+      }
+      recov += seg.recovery_sec || 0;
+    }
     return (effort + recov) / 60;
   }
 
