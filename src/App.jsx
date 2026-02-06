@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect, useMemo } from "react";
 import { DISTANCE_METERS } from './data/constants';
 import { s } from './styles/styles';
-import { FONT } from './styles/tokens';
+import { FONT, colors } from './styles/tokens';
 import { parseTimeToSeconds, computeVDOT, computeAllPaces } from './engine/vdot';
 import { buildPlan } from './engine/planBuilder';
 import { buildCoachContext } from './engine/coachContext';
@@ -16,7 +16,6 @@ import Summary from './components/onboarding/Summary';
 import PaceScreen from './screens/PaceScreen';
 import StructureScreen from './screens/StructureScreen';
 import PlanScreen from './screens/PlanScreen';
-import ChatButton from './components/chat/ChatButton';
 import ChatPanel from './components/chat/ChatPanel';
 
 const ONBOARDING_STEPS = ["Profil", "Historique", "Disponibilité", "Objectifs", "Résumé"];
@@ -239,28 +238,32 @@ export default function App() {
       {renderPlanStep()}
       {/* AI Coach Chat — only when Supabase is configured + user logged in + plan exists */}
       {supabaseConfigured && user && plan && (
-        <>
-          {!chatOpen && <ChatButton onClick={() => setChatOpen(true)} />}
-          <ChatPanel
-            isOpen={chatOpen}
-            onClose={() => setChatOpen(false)}
-            coachContext={coachContext}
-            accessToken={session?.access_token}
-          />
-        </>
+        <ChatPanel
+          isOpen={chatOpen}
+          onClose={() => setChatOpen(false)}
+          coachContext={coachContext}
+          accessToken={session?.access_token}
+        />
       )}
       <div style={s.nav}>
-        <div style={{ display: "flex", gap: 4, flexShrink: 0 }}>
-          <button style={s.btn} onClick={handleBackToSettings}>Paramètres</button>
-          {planStep > 0 && <button style={s.btn} onClick={() => setPlanStep(planStep - 1)}>← Retour</button>}
+        <button style={s.btn} onClick={handleBackToSettings}>Paramètres</button>
+        <div style={{ display: "flex", gap: 4 }}>
+          {supabaseConfigured && user && plan && (
+            <button
+              style={{ ...s.btnPrimary, background: colors.primary, borderColor: colors.primary }}
+              onClick={() => setChatOpen(true)}
+            >
+              Des questions ?
+            </button>
+          )}
+          {planStep < totalPlanSteps - 1 ? (
+            <button style={s.btnPrimary} onClick={() => setPlanStep(planStep + 1)}>Suivant →</button>
+          ) : (
+            <button style={{ ...s.btnPrimary, background: "#2a6e2a", borderColor: "#2a6e2a" }} onClick={() => {
+              document.querySelector('[data-export-pdf]')?.click();
+            }}>Export PDF</button>
+          )}
         </div>
-        {planStep < totalPlanSteps - 1 ? (
-          <button style={s.btnPrimary} onClick={() => setPlanStep(planStep + 1)}>Suivant →</button>
-        ) : (
-          <button style={{ ...s.btnPrimary, background: "#2a6e2a", borderColor: "#2a6e2a" }} onClick={() => {
-            document.querySelector('[data-export-pdf]')?.click();
-          }}>Export PDF</button>
-        )}
       </div>
     </div>
   );
