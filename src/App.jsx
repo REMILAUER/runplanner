@@ -1,9 +1,10 @@
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useMemo } from "react";
 import { DISTANCE_METERS } from './data/constants';
 import { s } from './styles/styles';
 import { FONT } from './styles/tokens';
 import { parseTimeToSeconds, computeVDOT, computeAllPaces } from './engine/vdot';
 import { buildPlan } from './engine/planBuilder';
+import { buildCoachContext } from './engine/coachContext';
 import { storage } from './services/storage';
 import { useAuth } from './context/AuthContext';
 import AuthScreen from './screens/AuthScreen';
@@ -15,6 +16,8 @@ import Summary from './components/onboarding/Summary';
 import PaceScreen from './screens/PaceScreen';
 import StructureScreen from './screens/StructureScreen';
 import PlanScreen from './screens/PlanScreen';
+import ChatButton from './components/chat/ChatButton';
+import ChatPanel from './components/chat/ChatPanel';
 
 const ONBOARDING_STEPS = ["Profil", "Historique", "Disponibilité", "Objectifs", "Résumé"];
 const PLAN_STEPS = ["Allures", "Plan"];
@@ -24,7 +27,7 @@ const DEFAULT_HISTORY = { yearKm: "", avgWeekKm: "", lastWeekKm: "" };
 const DEFAULT_AVAILABILITY = { sessionsPerWeek: 4, trainingDays: ["Mar", "Jeu", "Sam"] };
 
 export default function App() {
-  const { user, loading: authLoading, signOut } = useAuth();
+  const { user, session, loading: authLoading, signOut } = useAuth();
   const userId = user?.id || null;
   const supabaseConfigured = !!import.meta.env.VITE_SUPABASE_URL;
 
@@ -42,6 +45,13 @@ export default function App() {
   const [paces, setPaces] = useState(localData?.paces || null);
   const [plan, setPlan] = useState(localData?.plan || null);
   const [dataLoading, setDataLoading] = useState(false);
+  const [chatOpen, setChatOpen] = useState(false);
+
+  // Memoize coach context for the AI chat
+  const coachContext = useMemo(() => {
+    if (!plan) return "";
+    return buildCoachContext({ profile, history, availability, objectives, paces, plan });
+  }, [profile, history, availability, objectives, paces, plan]);
 
   // Phase 2: Async load from Supabase when user is available
   useEffect(() => {
@@ -227,6 +237,18 @@ export default function App() {
       </div>
       <div style={s.subtitle}>Personnalisé à partir de vos données</div>
       {renderPlanStep()}
+      {/* AI Coach Chat — only when Supabase is configured + user logged in + plan exists */}
+      {supabaseConfigured && user && plan && (
+        <>
+          {!chatOpen && <ChatButton onClick={() => setChatOpen(true)} />}
+          <ChatPanel
+            isOpen={chatOpen}
+            onClose={() => setChatOpen(false)}
+            coachContext={coachContext}
+            accessToken={session?.access_token}
+          />
+        </>
+      )}
       <div style={s.nav}>
         <div style={{ display: "flex", gap: 4, flexShrink: 0 }}>
           <button style={s.btn} onClick={handleBackToSettings}>Paramètres</button>
