@@ -5,9 +5,16 @@ import { SESSION_TYPES, ZONE_COLORS } from '../../data/constants';
 import { fmtDist } from '../../engine/weekGenerator';
 
 // ── Zone intensity heights for skyline (0-1 scale) ──
+// More spread-out scale for better visual differentiation
 const ZONE_HEIGHTS = {
-  Easy: 0.25, Actif: 0.20, Seuil1: 0.50, Tempo: 0.60,
-  Seuil2: 0.75, VMALongue: 0.88, VMACourte: 1.0,
+  Easy: 0.22, Actif: 0.18, Seuil1: 0.48, Tempo: 0.58,
+  Seuil2: 0.72, VMALongue: 0.88, VMACourte: 1.0,
+};
+
+// Short zone labels for skyline annotations
+const ZONE_SHORT = {
+  Easy: "EF", Actif: "Actif", Seuil1: "S1", Tempo: "Tempo",
+  Seuil2: "S2", VMALongue: "VMAl", VMACourte: "VMA",
 };
 
 // ── RPE color mapping ──
@@ -48,23 +55,50 @@ function buildSkylineSegments(session) {
 
       for (let si = 0; si < sets; si++) {
         for (let ri = 0; ri < repsPerSet; ri++) {
-          segments.push({ dur: workDur, height, color, type: "work" });
+          segments.push({ dur: workDur, height, color, type: "work", zone });
           if (ri < repsPerSet - 1) {
-            segments.push({ dur: recDur, height: 0.15, color: "#d0d0d0", type: "recovery" });
+            segments.push({ dur: recDur, height: 0.15, color: "#d0d0d0", type: "recovery", zone: null });
           }
         }
         if (si < sets - 1) {
-          segments.push({ dur: interSetDur, height: 0.12, color: "#d0d0d0", type: "recovery" });
+          segments.push({ dur: interSetDur, height: 0.12, color: "#d0d0d0", type: "recovery", zone: null });
         }
       }
     } else {
       // Single block (warmup, cooldown, continuous effort, or single rep)
       const dur = step.durationSec || 300; // fallback 5min
-      segments.push({ dur, height, color, type: step.stepType });
+      segments.push({ dur, height, color, type: step.stepType, zone });
     }
   }
 
   return segments;
+}
+
+// ── Merge consecutive same-zone work segments for label display ──
+function mergeWorkGroups(segments) {
+  const groups = [];
+  let i = 0;
+  while (i < segments.length) {
+    const seg = segments[i];
+    if (seg.type === "work") {
+      // Group consecutive work+recovery of same color
+      const group = { ...seg, segCount: 1, totalDur: seg.dur, startIdx: i };
+      let j = i + 1;
+      while (j < segments.length) {
+        if (segments[j].type === "recovery" && j + 1 < segments.length && segments[j + 1].color === seg.color) {
+          group.totalDur += segments[j].dur + segments[j + 1].dur;
+          group.segCount++;
+          j += 2;
+        } else break;
+      }
+      groups.push(group);
+      i = j;
+    } else {
+      groups.push({ ...seg, segCount: 1, totalDur: seg.dur, startIdx: i });
+      i++;
+    }
+  }
+  return groups;
 }
 
 // ── Intensity Skyline Component ──
@@ -75,56 +109,85 @@ function IntensitySkyline({ session }) {
   const totalDur = segments.reduce((sum, seg) => sum + seg.dur, 0);
   if (totalDur === 0) return null;
 
-  const SKYLINE_H = 64;
+  const SKYLINE_H = 80;
+  const BAR_H = 64;
+
+  // Build annotation groups for zone labels
+  const groups = mergeWorkGroups(segments);
+  // Only label main work groups (not warmup/cooldown)
+  const labeledGroups = groups.filter(g => g.type === "work" && g.zone);
 
   return (
     <div style={{
-      display: "flex", alignItems: "flex-end", height: SKYLINE_H,
-      padding: "8px 16px 0", background: "#f4f4f4",
-      borderBottom: "1px solid #e0e0e0", gap: 1,
-      overflow: "hidden",
+      padding: "0 16px", background: "#f7f7f7",
+      borderBottom: "1px solid #e8e8e8",
     }}>
-      {segments.map((seg, i) => {
-        const widthPct = Math.max(0.3, (seg.dur / totalDur) * 100);
-        return (
-          <div
-            key={i}
-            style={{
-              flex: `0 0 ${widthPct}%`,
-              height: `${Math.round(seg.height * SKYLINE_H)}px`,
-              background: seg.color,
-              borderRadius: "2px 2px 0 0",
-              minWidth: 2,
-              transition: "height 0.2s ease",
-            }}
-          />
-        );
-      })}
+      {/* Skyline bars */}
+      <div style={{
+        display: "flex", alignItems: "flex-end", height: BAR_H,
+        gap: 1, paddingTop: 16,
+      }}>
+        {segments.map((seg, i) => {
+          const widthPct = Math.max(0.4, (seg.dur / totalDur) * 100);
+          const isRecovery = seg.type === "recovery";
+          return (
+            <div
+              key={i}
+              style={{
+                flex: `0 0 ${widthPct}%`,
+                height: `${Math.max(3, Math.round(seg.height * BAR_H))}px`,
+                background: isRecovery
+                  ? `repeating-linear-gradient(45deg, ${seg.color}, ${seg.color} 2px, transparent 2px, transparent 4px)`
+                  : seg.color,
+                borderRadius: "2px 2px 0 0",
+                minWidth: isRecovery ? 3 : 4,
+                opacity: isRecovery ? 0.5 : 1,
+              }}
+            />
+          );
+        })}
+      </div>
+      {/* Duration axis labels */}
+      <div style={{
+        display: "flex", justifyContent: "space-between",
+        padding: "3px 0 6px", fontSize: 9, color: "#aaa",
+      }}>
+        <span>0'</span>
+        <span>{Math.round(totalDur / 60)}'</span>
+      </div>
     </div>
   );
 }
 
-// ── RPE Gauge Component ──
+// ── RPE Gauge Component — horizontal bar style ──
 function RpeGauge({ rpe }) {
   if (!rpe && rpe !== 0) return null;
-  const dots = 10;
+  const segments = 10;
+  const color = rpeColor(rpe);
   return (
-    <div style={{ display: "flex", alignItems: "center", gap: 4, marginTop: 8 }}>
-      <span style={{ fontSize: 10, color: "rgba(255,255,255,0.7)", marginRight: 2 }}>RPE</span>
-      <div style={{ display: "flex", gap: 2 }}>
-        {Array.from({ length: dots }, (_, i) => (
+    <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 10 }}>
+      <span style={{
+        fontSize: 10, fontWeight: 700, color: "rgba(255,255,255,0.8)",
+        letterSpacing: 0.5, minWidth: 24,
+      }}>RPE</span>
+      <div style={{
+        display: "flex", gap: 2, flex: 1, maxWidth: 140,
+      }}>
+        {Array.from({ length: segments }, (_, i) => (
           <div
             key={i}
             style={{
-              width: 6, height: 6, borderRadius: "50%",
-              background: i < rpe ? rpeColor(rpe) : "rgba(255,255,255,0.25)",
-              border: i < rpe ? "none" : "1px solid rgba(255,255,255,0.3)",
-              boxSizing: "border-box",
+              flex: 1, height: 8, borderRadius: 1,
+              background: i < rpe ? color : "rgba(255,255,255,0.2)",
+              transition: "background 0.15s",
             }}
           />
         ))}
       </div>
-      <span style={{ fontSize: 10, fontWeight: 600, color: "#fff", marginLeft: 2 }}>
+      <span style={{
+        fontSize: 13, fontWeight: 700, color: "#fff",
+        minWidth: 30, textAlign: "right",
+      }}>
         {rpe}/10
       </span>
     </div>
@@ -190,7 +253,7 @@ function MainBlockContent({ session, sessionType }) {
           }}>
             {setsPrefix}{repsCount}×
           </span>
-          <span style={{ fontSize: 12, fontWeight: 600, color: "#333" }}>
+          <span style={{ fontSize: 13, fontWeight: 600, color: "#333" }}>
             {step.label || session.main?.[0]?.description}
           </span>
         </div>
@@ -300,27 +363,26 @@ function SessionDetailModal({ session, paces, onClose }) {
       >
         {/* ── Header ── */}
         <div style={{
-          padding: "14px 16px",
-          borderBottom: "none",
+          padding: "16px 16px 14px",
           background: sessionType.color,
         }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
             <span style={{ fontSize: 11, color: "rgba(255,255,255,0.8)" }}>
               {session.dateFormatted}
             </span>
             {/* Type badge pill */}
             <span style={{
               fontSize: 9, fontWeight: 700, letterSpacing: 0.5,
-              color: sessionType.color, background: "#fff",
-              borderRadius: 3, padding: "1px 6px",
+              color: sessionType.color, background: "rgba(255,255,255,0.95)",
+              borderRadius: 3, padding: "2px 7px",
             }}>
               {sessionType.short}
             </span>
           </div>
-          <div style={{ fontSize: 17, fontWeight: 700, color: "#fff" }}>
+          <div style={{ fontSize: 18, fontWeight: 700, color: "#fff", lineHeight: 1.2 }}>
             {session.title}
           </div>
-          <div style={{ display: "flex", gap: 12, marginTop: 6 }}>
+          <div style={{ display: "flex", gap: 14, marginTop: 8 }}>
             <span style={{ fontSize: 12, color: "rgba(255,255,255,0.9)" }}>
               ⏱ {session.duration}
             </span>
@@ -404,57 +466,47 @@ function SessionDetailModal({ session, paces, onClose }) {
             </div>
           )}
 
-          {/* Notes */}
-          {session.notes && (
+          {/* Conseils — collapsible, merges notes + coach_tips */}
+          {(session.notes || (session.coach_tips && session.coach_tips.length > 0)) && (
             <div style={{
-              padding: 10, background: "#fffbeb", borderRadius: 2,
+              borderRadius: 4, overflow: "hidden",
               border: "1px solid #f0e6c0",
-            }}>
-              <div style={{
-                fontSize: 10, fontWeight: 700, color: "#8a7a3a",
-                textTransform: "uppercase", letterSpacing: 1, marginBottom: 4
-              }}>
-                💡 Conseils
-              </div>
-              <div style={{ fontSize: 12, color: "#5a5030", lineHeight: 1.5 }}>
-                {session.notes}
-              </div>
-            </div>
-          )}
-
-          {/* Coach tips — collapsible */}
-          {session.coach_tips && session.coach_tips.length > 0 && (
-            <div style={{
-              borderRadius: 2,
-              border: "1px solid #c8e6c9", marginTop: 10,
-              overflow: "hidden",
+              background: "#fffbeb",
             }}>
               <div
                 style={{
                   padding: "8px 10px",
-                  background: tipsOpen ? "#e8f5e9" : "#f1f8f1",
                   cursor: "pointer", userSelect: "none",
                   display: "flex", alignItems: "center", justifyContent: "space-between",
                 }}
                 onClick={() => setTipsOpen(!tipsOpen)}
               >
                 <span style={{
-                  fontSize: 10, fontWeight: 700, color: "#2e7d32",
+                  fontSize: 10, fontWeight: 700, color: "#8a7a3a",
                   textTransform: "uppercase", letterSpacing: 1,
                 }}>
-                  Conseils du coach
+                  💡 Conseils
                 </span>
-                <span style={{ fontSize: 12, color: "#2e7d32", transform: tipsOpen ? "rotate(180deg)" : "none", transition: "transform 0.2s" }}>
-                  ▼
-                </span>
+                <span style={{
+                  fontSize: 10, color: "#8a7a3a",
+                  transform: tipsOpen ? "rotate(180deg)" : "none",
+                  transition: "transform 0.2s",
+                }}>▼</span>
               </div>
               {tipsOpen && (
-                <div style={{ padding: "6px 10px 10px", background: "#e8f5e9" }}>
-                  <ul style={{ margin: 0, paddingLeft: 16, fontSize: 12, color: "#1b5e20", lineHeight: 1.6 }}>
-                    {(Array.isArray(session.coach_tips) ? session.coach_tips : [session.coach_tips]).map((tip, i) => (
-                      <li key={i} style={{ marginBottom: 3 }}>{tip}</li>
-                    ))}
-                  </ul>
+                <div style={{ padding: "0 10px 10px" }}>
+                  {session.notes && (
+                    <div style={{ fontSize: 12, color: "#5a5030", lineHeight: 1.6, marginBottom: session.coach_tips ? 8 : 0 }}>
+                      {session.notes}
+                    </div>
+                  )}
+                  {session.coach_tips && session.coach_tips.length > 0 && (
+                    <ul style={{ margin: 0, paddingLeft: 16, fontSize: 12, color: "#5a5030", lineHeight: 1.6 }}>
+                      {(Array.isArray(session.coach_tips) ? session.coach_tips : [session.coach_tips]).map((tip, i) => (
+                        <li key={i} style={{ marginBottom: 2 }}>{tip}</li>
+                      ))}
+                    </ul>
+                  )}
                 </div>
               )}
             </div>

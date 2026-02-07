@@ -605,6 +605,7 @@ export function generateAndPersistPlan(plan, availability, paces, startDate) {
           description: session.main?.map(b => b.description).join(' + ') || '',
           notes: session.notes || null,
           coachTips: session.coach_tips || [],
+          rpe: session._rpe || null,
           steps: session._dbSteps || buildStepsFromLegacy(session, paces),
         };
       }),

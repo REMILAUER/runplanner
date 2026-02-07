@@ -382,6 +382,7 @@ export const storage = {
             description: s.description,
             notes: s.notes,
             coach_tips: s.coachTips,
+            rpe: s.rpe || null,
           });
           sessionMeta.push(s.steps || []);
         });
