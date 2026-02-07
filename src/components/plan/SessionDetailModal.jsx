@@ -342,7 +342,7 @@ function MainBlockContent({ session, sessionType }) {
     );
   }
 
-  // ── Path B: Multiple structured steps (mixed sessions) → uniform card per step ──
+  // ── Path B: Multiple structured steps (mixed sessions, SL segments) → uniform card per step ──
   if (steps.length > 1) {
     return (
       <>
@@ -352,6 +352,12 @@ function MainBlockContent({ session, sessionType }) {
           const workStr = fmtStepWork(step);
           const recStr = fmtRecovery(step);
           const paceStr = fmtStepPace(step);
+
+          // For SL/footing segments: use session.main[i] data when step has no duration/distance
+          const mainBlock = session.main?.[i];
+          const hasStructuredWork = workStr !== "—";
+          const displayLabel = hasStructuredWork ? workStr : (mainBlock?.description || step.label || "—");
+          const displaySub = hasStructuredWork ? step.description : (mainBlock ? `${mainBlock.duration} @ ${mainBlock.pace}/km` : null);
 
           return (
             <div
@@ -374,18 +380,18 @@ function MainBlockContent({ session, sessionType }) {
                   background: borderColor, display: "inline-block", flexShrink: 0,
                 }} />
                 <span style={{ fontSize: 12, fontWeight: 600, color: "#333" }}>
-                  {workStr}
+                  {displayLabel}
                 </span>
-                {paceStr && (
+                {hasStructuredWork && paceStr && (
                   <span style={{ fontSize: 11, color: "#888" }}>
                     @ {paceStr}/km
                   </span>
                 )}
                 <ZoneBadge zone={zone} />
               </div>
-              {step.description && (
+              {displaySub && (
                 <div style={{ padding: "0 10px 4px 26px", fontSize: 11, color: "#888" }}>
-                  {step.description}
+                  {displaySub}
                 </div>
               )}
               {/* Recovery line */}

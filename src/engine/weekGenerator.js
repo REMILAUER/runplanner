@@ -348,6 +348,19 @@ function recalcDurations(sessions, slots, paces) {
     easyPaceMinKm = ((paces.Easy.slow + paces.Easy.fast) / 2) / 60;
   }
 
+  // Helper: pace in min/km for a given zone
+  function zonePaceMinKm(zone) {
+    const pd = paces?.[zone];
+    if (pd) return ((pd.slow + pd.fast) / 2) / 60;
+    return easyPaceMinKm;
+  }
+
+  function fmtMin(min) {
+    const m = Math.round(min);
+    if (m > 60) return `${Math.floor(m / 60)}h${String(m % 60).padStart(2, "0")}`;
+    return `${m}min`;
+  }
+
   const DISTANCE_TYPES = new Set(["EF", "SL"]);
 
   sessions.forEach((session, i) => {
@@ -364,38 +377,38 @@ function recalcDurations(sessions, slots, paces) {
       mainMin *= session._durationFactor;
     }
 
-    // Adaptive warmup/cooldown
-    const isQuality = false; // EF/SL → no structured warmup for SL, yes for some EF
-    const hasWarmup = session.warmup && session.warmup.duration !== "—";
-    let warmupMin = 0, cooldownMin = 5;
-
-    if (hasWarmup) {
-      if (mainMin <= 20) { warmupMin = 12; cooldownMin = 8; }
-      else if (mainMin <= 40) { warmupMin = 15; cooldownMin = 10; }
-      else if (mainMin <= 60) { warmupMin = 18; cooldownMin = 10; }
-      else { warmupMin = 20; cooldownMin = 12; }
-    }
-
-    const totalMin = Math.round(warmupMin + mainMin + cooldownMin);
+    // EF/SL have no separate warmup/cooldown — duration IS the run
+    const totalMin = Math.round(mainMin);
 
     // Update session fields
-    session.duration = totalMin > 60
-      ? `${Math.floor(totalMin / 60)}h${String(totalMin % 60).padStart(2, "0")}`
-      : `${totalMin}min`;
+    session.duration = fmtMin(totalMin);
     session._targetDurationMin = totalMin;
     session._targetDistanceKm = distKm;
 
-    // Update warmup/cooldown display
-    if (hasWarmup) {
-      session.warmup.duration = `${warmupMin}min`;
-    }
-    if (session.cooldown) {
-      session.cooldown.duration = `${cooldownMin}min`;
+    // Update main block durations for EF
+    if (session.main && session.main.length > 0 && session.type === "EF") {
+      session.main[0].duration = fmtMin(Math.round(mainMin));
     }
 
-    // Update main block durations for SL/EF (simple single-block display)
-    if (session.main && session.main.length > 0 && session.type === "EF") {
-      session.main[0].duration = `${Math.round(mainMin)}min`;
+    // Update SL main blocks — recalculate per-segment km and durations
+    if (session.type === "SL" && session.main && session.main.length > 0) {
+      // Rebuild main block descriptions with new distKm
+      const steps = session._dbSteps?.filter(st => st.stepType === "main") || [];
+      if (steps.length > 0 && session.main.length === steps.length) {
+        // SL segments have fractions — recalculate from new distance
+        steps.forEach((step, si) => {
+          // Try to extract fraction from label pattern "XX% en ..."
+          const fracMatch = session.main[si]?.description?.match(/^(\d+)% en (\w+)/);
+          if (fracMatch) {
+            const pct = parseInt(fracMatch[1]) / 100;
+            const zone = step.paceZone || "Easy";
+            const segKm = Math.round(distKm * pct * 10) / 10;
+            const segMin = segKm * zonePaceMinKm(zone);
+            session.main[si].description = `${Math.round(pct * 100)}% en ${zone.toLowerCase()} (~${segKm}km)`;
+            session.main[si].duration = `~${fmtMin(segMin)}`;
+          }
+        });
+      }
     }
   });
 }

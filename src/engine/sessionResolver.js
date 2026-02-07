@@ -226,7 +226,7 @@ export function buildSessionFromLibrary(entry, targetDistanceKm, paces, sessionT
   const adaptive = computeWarmupCooldown(mainMin);
 
   const warmupMin = hasWarmup ? adaptive.warmupMin : 0;
-  const cooldownMin = hasWarmup ? adaptive.cooldownMin : 5;
+  const cooldownMin = hasWarmup ? adaptive.cooldownMin : 0;
 
   const warmup = hasWarmup
     ? { duration: `${warmupMin}min`, pace: easyPaceStr, description: "Footing progressif + gammes" }
@@ -234,7 +234,7 @@ export function buildSessionFromLibrary(entry, targetDistanceKm, paces, sessionT
 
   const cooldown = hasWarmup
     ? { duration: `${cooldownMin}min`, pace: easyPaceStr, description: "Retour au calme" }
-    : { duration: "5min", pace: easyPaceStr, description: "Marche + étirements" };
+    : { duration: "—", pace: "—", description: "—" };
 
   // Compute total duration estimate
   const totalMin = warmupMin + mainMin + cooldownMin;
@@ -380,17 +380,19 @@ export function buildSessionFromLibrary(entry, targetDistanceKm, paces, sessionT
     });
   }
 
-  // Cooldown step
-  _dbSteps.push({
-    sortOrder: stepOrder++,
-    stepType: "cooldown",
-    durationSec: cooldownMin * 60,
-    paceZone: "Easy",
-    paceMinSecKm: easyPaceData?.fast || null,
-    paceMaxSecKm: easyPaceData?.slow || null,
-    label: cooldown.description,
-    description: `${cooldown.duration} @ ${cooldown.pace}`,
-  });
+  // Cooldown step (only for quality sessions with structured warmup)
+  if (cooldownMin > 0) {
+    _dbSteps.push({
+      sortOrder: stepOrder++,
+      stepType: "cooldown",
+      durationSec: cooldownMin * 60,
+      paceZone: "Easy",
+      paceMinSecKm: easyPaceData?.fast || null,
+      paceMaxSecKm: easyPaceData?.slow || null,
+      label: cooldown.description,
+      description: `${cooldown.duration} @ ${cooldown.pace}`,
+    });
+  }
 
   return {
     type,
