@@ -268,7 +268,9 @@ function resolveSlot(slot, phase, ratio, paces, weekInPhase, totalWeeksInPhase, 
 }
 
 // ── 3. distributeVolume ──
-// Assigns km to each session based on role percentages & SL cap
+// Assigns km to each session based on role percentages & SL cap.
+// For quality sessions with _minDistanceKm (from structured effort),
+// the distance never goes below the minimum required by the session structure.
 function distributeVolume(sessions, slots, weekVolume, distance) {
   const slMaxKm = (SL_MAX_KM && SL_MAX_KM[distance]) || 30;
 
@@ -285,7 +287,11 @@ function distributeVolume(sessions, slots, weekVolume, distance) {
       session.distance = Math.round(targetKm);
       allocated += session.distance;
     } else if (slot.volumePct > 0) {
-      const targetKm = weekVolume * slot.volumePct;
+      let targetKm = weekVolume * slot.volumePct;
+      // Quality sessions: never go below the structured minimum distance
+      if (session._minDistanceKm && session._minDistanceKm > targetKm) {
+        targetKm = session._minDistanceKm;
+      }
       session.distance = Math.round(targetKm);
       allocated += session.distance;
     } else {

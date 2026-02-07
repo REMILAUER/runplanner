@@ -426,6 +426,42 @@ export function buildSessionFromLibrary(entry, targetDistanceKm, paces, sessionT
     });
   }
 
+  // Compute minimum distance for quality sessions (from structured effort + warmup/cooldown)
+  let _minDistanceKm = null;
+  if (!isEasySession && entry.structure) {
+    const st = entry.structure;
+    let effortKm = 0;
+    // Distance-based reps (3 × 5km, 10 × 400m, etc.)
+    if (st.distance_m && st.reps) {
+      effortKm = (st.distance_m * st.reps) / 1000;
+      // Add recovery distance: estimate recovery jog at easy pace
+      const recovSec = (st.reps - 1) * (st.recovery_sec || 60);
+      const easyPaceSec = paces?.Easy ? (paces.Easy.slow + paces.Easy.fast) / 2 : 360;
+      effortKm += (recovSec / easyPaceSec);
+    }
+    // Sets format (2 × (6 × 300m))
+    else if (st.sets && st.reps_per_set && st.distance_m) {
+      effortKm = (st.distance_m * st.reps_per_set * st.sets) / 1000;
+      const intraRecovSec = (st.reps_per_set - 1) * (st.recovery_intra_sec || 60) * st.sets;
+      const interRecovSec = (st.sets - 1) * (st.recovery_inter_sec || 180);
+      const easyPaceSec = paces?.Easy ? (paces.Easy.slow + paces.Easy.fast) / 2 : 360;
+      effortKm += ((intraRecovSec + interRecovSec) / easyPaceSec);
+    }
+    // Time-based: estimate from duration × pace
+    else if (mainMin > 0 && paces) {
+      const mainPd = paces[mainPaceZone];
+      if (mainPd) {
+        effortKm = (mainMin * 60) / ((mainPd.slow + mainPd.fast) / 2);
+      }
+    }
+    if (effortKm > 0) {
+      // Add warmup + cooldown distance (estimated from duration at easy pace)
+      const easyPaceMinKm = paces?.Easy ? ((paces.Easy.slow + paces.Easy.fast) / 2) / 60 : 6;
+      const wcKm = (warmupMin + cooldownMin) / easyPaceMinKm;
+      _minDistanceKm = Math.round(effortKm + wcKm);
+    }
+  }
+
   return {
     type,
     title: entry.name,
@@ -442,6 +478,7 @@ export function buildSessionFromLibrary(entry, targetDistanceKm, paces, sessionT
     _targetDurationMin: totalRounded,
     _targetDistanceKm: targetDistanceKm,
     _durationFactor: entry.duration_factor || 1.0,
+    _minDistanceKm,
   };
 }
 
