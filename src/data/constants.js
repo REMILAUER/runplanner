@@ -50,11 +50,17 @@ export const DISTANCE_MIN_CEILING = { "5km": 40, "10km": 40, "Semi Marathon": 45
 // Max SL distance per target race
 export const SL_MAX_KM = { "5km": 22, "10km": 22, "Semi Marathon": 30, "Marathon": 36 };
 
+// Minimum SL distance progression during Spécifique phase (per week-in-phase index, 1-based).
+// Ensures marathon SL reach at least 30km. Values interpolate linearly for phases > 3 weeks.
+export const SL_MIN_KM_SPECIFIQUE = {
+  "Marathon": [24, 27, 30],
+};
+
 // Max SL duration (minutes) per phase × distance
 export const SL_MAX_DURATION_MIN = {
   Base:         { "5km": 60, "10km": 60,  "Semi Marathon": 65,  "Marathon": 75  },
   Construction: { "5km": 70, "10km": 75,  "Semi Marathon": 90,  "Marathon": 90  },
-  "Spécifique": { "5km": 70, "10km": 90,  "Semi Marathon": 100, "Marathon": 150 },
+  "Spécifique": { "5km": 70, "10km": 90,  "Semi Marathon": 100, "Marathon": 180 },
   "Affûtage":   { "5km": 50, "10km": 60,  "Semi Marathon": 70,  "Marathon": 90  },
 };
 

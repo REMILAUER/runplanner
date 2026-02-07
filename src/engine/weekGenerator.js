@@ -1,6 +1,6 @@
 import { selectSession, selectSessionByRPE, buildSessionFromLibrary } from './sessionResolver';
 import { formatPace } from './vdot';
-import { PHASE_COLORS, SESSION_TYPES, DAYS_LIST, SL_MAX_KM, SL_MAX_DURATION_MIN, VOLUME_DISTRIBUTION } from '../data/constants';
+import { PHASE_COLORS, SESSION_TYPES, DAYS_LIST, SL_MAX_KM, SL_MAX_DURATION_MIN, SL_MIN_KM_SPECIFIQUE, VOLUME_DISTRIBUTION } from '../data/constants';
 import { FONT } from '../styles/tokens';
 
 // ── Shared components ───────────────────────────────────────────────
@@ -271,8 +271,18 @@ function resolveSlot(slot, phase, ratio, paces, weekInPhase, totalWeeksInPhase, 
 // Assigns km to each session based on role percentages & SL cap.
 // For quality sessions with _minDistanceKm (from structured effort),
 // the distance never goes below the minimum required by the session structure.
-function distributeVolume(sessions, slots, weekVolume, distance) {
+// For marathon Spécifique SLs, enforces minimum progressive distances (24→27→30km).
+function distributeVolume(sessions, slots, weekVolume, distance, phase, weekInPhase) {
   const slMaxKm = (SL_MAX_KM && SL_MAX_KM[distance]) || 30;
+
+  // SL minimum distance for Spécifique phase (e.g. marathon: 24→27→30km)
+  let slMinKm = 0;
+  const minProfile = SL_MIN_KM_SPECIFIQUE?.[distance];
+  if (minProfile && phase === "Spécifique" && weekInPhase > 0) {
+    // weekInPhase is 1-based; clamp to profile length (last value is the floor for later weeks)
+    const idx = Math.min(weekInPhase - 1, minProfile.length - 1);
+    slMinKm = minProfile[idx];
+  }
 
   // First pass: assign km to sessions with volumePct
   let allocated = 0;
@@ -283,7 +293,9 @@ function distributeVolume(sessions, slots, weekVolume, distance) {
     if (!slot) return;
 
     if (slot.role === "sl") {
-      const targetKm = Math.min(weekVolume * slot.volumePct, slMaxKm);
+      let targetKm = Math.min(weekVolume * slot.volumePct, slMaxKm);
+      // Enforce minimum SL distance for marathon Spécifique
+      if (slMinKm > 0 && targetKm < slMinKm) targetKm = slMinKm;
       session.distance = Math.round(targetKm);
       allocated += session.distance;
     } else if (slot.volumePct > 0) {
@@ -582,7 +594,7 @@ export function generateWeeklyPlan(plan, availability, paces, startDate) {
     });
 
     // ── Step 3: Distribute volume ──
-    distributeVolume(sessions, slots, volume, distance);
+    distributeVolume(sessions, slots, volume, distance, phase, weekInPhase);
 
     // ── Step 3b: Cap SL duration ──
     capSlDuration(sessions, slots, phase, distance, paces);
