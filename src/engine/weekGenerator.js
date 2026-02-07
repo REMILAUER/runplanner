@@ -300,17 +300,48 @@ function distributeVolume(sessions, slots, weekVolume, distance) {
   });
 
   // Distribute remaining km across footings with weighting (long ×1.6, short ×1.0)
+  // If a footing would be too short (< MIN_FOOTING_KM), drop it and convert to rest day
+  const MIN_FOOTING_KM = 4;
   const remaining = Math.max(0, weekVolume - allocated);
+
   if (footingIndices.length > 0) {
-    const weights = footingIndices.map(i => {
-      const fl = slots[i]?.footingLength;
-      return fl === "long" ? 1.6 : 1.0;
-    });
-    const totalWeight = weights.reduce((a, b) => a + b, 0);
-    footingIndices.forEach((fi, wi) => {
-      const share = (weights[wi] / totalWeight) * remaining;
-      sessions[fi].distance = Math.max(1, Math.round(share));
-    });
+    let activeFootings = [...footingIndices];
+
+    // Iteratively distribute and drop too-short footings
+    let settled = false;
+    while (!settled && activeFootings.length > 0) {
+      const weights = activeFootings.map(i => {
+        const fl = slots[i]?.footingLength;
+        return fl === "long" ? 1.6 : 1.0;
+      });
+      const totalWeight = weights.reduce((a, b) => a + b, 0);
+
+      // Compute shares
+      const shares = activeFootings.map((fi, wi) => ({
+        fi,
+        share: Math.round((weights[wi] / totalWeight) * remaining),
+      }));
+
+      // Find any footing that's too short
+      const tooShort = shares.find(s => s.share < MIN_FOOTING_KM);
+      if (tooShort && activeFootings.length > 1) {
+        // Drop this footing → mark session as rest
+        sessions[tooShort.fi] = {
+          isRest: true,
+          title: "Repos",
+          type: "REST",
+          distance: 0,
+          _dropped: true,
+        };
+        activeFootings = activeFootings.filter(i => i !== tooShort.fi);
+      } else {
+        // All footings are viable (or only 1 left) — assign distances
+        shares.forEach(({ fi, share }) => {
+          sessions[fi].distance = Math.max(1, share);
+        });
+        settled = true;
+      }
+    }
   }
 }
 
@@ -559,8 +590,23 @@ export function generateWeeklyPlan(plan, availability, paces, startDate) {
     // ── Step 3c: Recalculate durations after distance changes ──
     recalcDurations(sessions, slots, paces);
 
+    // ── Step 3d: Filter out dropped footings (converted to REST by distributeVolume) ──
+    // These sessions had too little volume to be viable (< 4km).
+    // They become rest days naturally by not being placed in assignToDays.
+    const droppedDaySlots = [];
+    const activeSessions = [];
+    const activeSlots = [];
+    sessions.forEach((s, i) => {
+      if (s._dropped) {
+        droppedDaySlots.push(s);
+      } else {
+        activeSessions.push(s);
+        activeSlots.push(slots[i]);
+      }
+    });
+
     // ── Step 4: Assign to days ──
-    const daySlots = assignToDays(sessions, slots, trainingDays);
+    const daySlots = assignToDays(activeSessions, activeSlots, trainingDays);
 
     // Build final session list with dates
     sessions = daySlots
