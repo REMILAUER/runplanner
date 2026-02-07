@@ -384,6 +384,7 @@ export function buildSessionFromLibrary(entry, targetDistanceKm, paces, sessionT
     notes: entry.notes || "",
     coach_tips: entry.coach_tips || [],
     _dbSteps,
+    _rpe: entry.rpe || null,
     _sourceTemplateId: entry.id || null,
     _targetDurationMin: totalRounded,
     _targetDistanceKm: targetDistanceKm,
