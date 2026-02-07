@@ -337,6 +337,69 @@ function capSlDuration(sessions, slots, phase, distance, paces) {
   });
 }
 
+// ── 3c. recalcDurations ──
+// After distributeVolume + capSlDuration changed distances, recalculate durations
+// to match the new distances. Only affects distance-based sessions (EF, SL).
+// Quality sessions (VMA, SEUIL, TEMPO) keep their structured duration.
+function recalcDurations(sessions, slots, paces) {
+  // Easy pace in min/km (fallback 5.5)
+  let easyPaceMinKm = 5.5;
+  if (paces?.Easy) {
+    easyPaceMinKm = ((paces.Easy.slow + paces.Easy.fast) / 2) / 60;
+  }
+
+  const DISTANCE_TYPES = new Set(["EF", "SL"]);
+
+  sessions.forEach((session, i) => {
+    if (!DISTANCE_TYPES.has(session.type)) return; // quality sessions → keep original duration
+
+    const distKm = typeof session.distance === "number"
+      ? session.distance
+      : (session.distance?.low || 0);
+    if (distKm <= 0) return;
+
+    // Main duration from distance × pace, apply duration_factor for footings
+    let mainMin = distKm * easyPaceMinKm;
+    if (session.type === "EF" && session._durationFactor) {
+      mainMin *= session._durationFactor;
+    }
+
+    // Adaptive warmup/cooldown
+    const isQuality = false; // EF/SL → no structured warmup for SL, yes for some EF
+    const hasWarmup = session.warmup && session.warmup.duration !== "—";
+    let warmupMin = 0, cooldownMin = 5;
+
+    if (hasWarmup) {
+      if (mainMin <= 20) { warmupMin = 12; cooldownMin = 8; }
+      else if (mainMin <= 40) { warmupMin = 15; cooldownMin = 10; }
+      else if (mainMin <= 60) { warmupMin = 18; cooldownMin = 10; }
+      else { warmupMin = 20; cooldownMin = 12; }
+    }
+
+    const totalMin = Math.round(warmupMin + mainMin + cooldownMin);
+
+    // Update session fields
+    session.duration = totalMin > 60
+      ? `${Math.floor(totalMin / 60)}h${String(totalMin % 60).padStart(2, "0")}`
+      : `${totalMin}min`;
+    session._targetDurationMin = totalMin;
+    session._targetDistanceKm = distKm;
+
+    // Update warmup/cooldown display
+    if (hasWarmup) {
+      session.warmup.duration = `${warmupMin}min`;
+    }
+    if (session.cooldown) {
+      session.cooldown.duration = `${cooldownMin}min`;
+    }
+
+    // Update main block durations for SL/EF (simple single-block display)
+    if (session.main && session.main.length > 0 && session.type === "EF") {
+      session.main[0].duration = `${Math.round(mainMin)}min`;
+    }
+  });
+}
+
 // ── 4. assignToDays ──
 // Places sessions on training days respecting constraints:
 // - SL on Sam/Dim
@@ -468,6 +531,9 @@ export function generateWeeklyPlan(plan, availability, paces, startDate) {
 
     // ── Step 3b: Cap SL duration ──
     capSlDuration(sessions, slots, phase, distance, paces);
+
+    // ── Step 3c: Recalculate durations after distance changes ──
+    recalcDurations(sessions, slots, paces);
 
     // ── Step 4: Assign to days ──
     const daySlots = assignToDays(sessions, slots, trainingDays);

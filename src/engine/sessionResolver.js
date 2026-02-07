@@ -407,6 +407,7 @@ export function buildSessionFromLibrary(entry, targetDistanceKm, paces, sessionT
     _sourceTemplateId: entry.id || null,
     _targetDurationMin: totalRounded,
     _targetDistanceKm: targetDistanceKm,
+    _durationFactor: entry.duration_factor || 1.0,
   };
 }
 
