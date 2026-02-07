@@ -45,6 +45,8 @@ export function hydrateWeeksFromDb(dbWeeks) {
         duration: formatDurationMin(dbSess.target_duration_min),
         distance: distKm,
         ...reconstructSessionDetail(dbSess.session_steps || []),
+        _dbSteps: reconstructDbSteps(dbSess.session_steps || []),
+        _rpe: dbSess.rpe || null,
         notes: dbSess.notes || dbSess.description || "",
         coach_tips: dbSess.coach_tips || [],
       };
@@ -193,6 +195,32 @@ function reconstructSessionDetail(steps) {
     main: main.length > 0 ? main : [{ description: "—", duration: "—", pace: "—" }],
     cooldown,
   };
+}
+
+/**
+ * Reconstruct _dbSteps array from DB session_steps rows.
+ * Maps snake_case DB columns → camelCase fields expected by SessionDetailModal.
+ */
+function reconstructDbSteps(steps) {
+  if (!steps || steps.length === 0) return [];
+  return steps
+    .sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0))
+    .map(s => ({
+      sortOrder: s.sort_order || 0,
+      stepType: s.step_type || "main",
+      durationSec: s.duration_sec || null,
+      distanceM: s.distance_m || null,
+      reps: s.reps || null,
+      sets: s.sets || null,
+      paceZone: s.pace_zone || "Easy",
+      paceMinSecKm: s.pace_min_sec_km || null,
+      paceMaxSecKm: s.pace_max_sec_km || null,
+      recoveryDurationSec: s.recovery_duration_sec || null,
+      recoveryType: s.recovery_type || null,
+      recoveryBetweenSetsSec: s.recovery_between_sets_sec || null,
+      label: s.label || s.description || "",
+      description: s.description || null,
+    }));
 }
 
 /**
