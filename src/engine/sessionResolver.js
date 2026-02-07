@@ -452,29 +452,54 @@ function buildDurationStr(entry) {
  * Select a session from the library by RPE proximity.
  * V2: library is now flat arrays with native RPE field on each session.
  *
+ * Features:
+ * - Anti-repetition: excludes sessions whose IDs are in `usedIds`
+ * - targetRace filter: for SPECIFIQUE sessions, filters by `target_race` field
+ * - Random pick among equal-RPE candidates for variety
+ *
  * @param {string} sessionType - Library key (VMA_COURTE, SEUIL2, etc.)
  * @param {string} phase - Training phase (unused in V2, kept for backward compat)
  * @param {number} targetRPE - Desired RPE (1-10)
+ * @param {Set} usedIds - Set of session IDs already used (for anti-repetition)
+ * @param {string|null} targetRace - Filter SPECIFIQUE sessions by target_race (e.g. "semi")
  * @returns {Object|null} - Library entry or null
  */
-export function selectSessionByRPE(sessionType, phase, targetRPE) {
-  const available = SESSION_LIBRARY[sessionType];
+export function selectSessionByRPE(sessionType, phase, targetRPE, usedIds = new Set(), targetRace = null) {
+  let available = SESSION_LIBRARY[sessionType];
   if (!available || !Array.isArray(available) || available.length === 0) return null;
 
-  // Pick session with closest RPE to target
-  let best = null;
-  let bestDelta = Infinity;
-
-  for (const entry of available) {
-    const entryRPE = entry.rpe || 5; // fallback
-    const delta = Math.abs(entryRPE - targetRPE);
-    if (delta < bestDelta) {
-      bestDelta = delta;
-      best = entry;
-    }
+  // Filter by target_race if specified (for SPECIFIQUE category)
+  if (targetRace) {
+    const filtered = available.filter(e => e.target_race === targetRace);
+    if (filtered.length > 0) available = filtered;
   }
 
-  return best;
+  // Sort candidates by RPE distance to target
+  const scored = available.map(entry => ({
+    entry,
+    delta: Math.abs((entry.rpe || 5) - targetRPE),
+    used: usedIds.has(entry.id),
+  }));
+  scored.sort((a, b) => a.delta - b.delta);
+
+  // Try to pick an unused session first
+  const bestDelta = scored[0].delta;
+
+  // Candidates at the best RPE delta that are NOT already used
+  const freshAtBest = scored.filter(s => s.delta === bestDelta && !s.used);
+  if (freshAtBest.length > 0) {
+    return freshAtBest[Math.floor(Math.random() * freshAtBest.length)].entry;
+  }
+
+  // All at best delta are used — try next-closest RPE deltas (unused)
+  const freshAny = scored.filter(s => !s.used);
+  if (freshAny.length > 0) {
+    return freshAny[0].entry; // closest unused RPE
+  }
+
+  // Everything used — fall back to random among best delta (allow repeat)
+  const atBest = scored.filter(s => s.delta === bestDelta);
+  return atBest[Math.floor(Math.random() * atBest.length)].entry;
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────

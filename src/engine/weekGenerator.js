@@ -41,43 +41,61 @@ export function computePhaseBoundaries(volumeSchedule) {
 // Architecture: 4 internal functions (buildSessionSlots → resolveSlot →
 // distributeVolume → assignToDays) replace the V1 per-phase if/else blocks.
 
+// ── Distance → SPECIFIQUE target_race mapping ──
+const DISTANCE_TO_RACE = {
+  "5km": "5km",
+  "10km": "10km",
+  "Semi Marathon": "semi",
+  "Marathon": "marathon",
+};
+
 // ── 1. buildSessionSlots ──
-// Returns slot descriptors: [{ role, type, targetRPE, volumePct }]
+// Returns slot descriptors: [{ role, type, targetRPE, volumePct, targetRace? }]
+//
+// Design principles:
+// - quality_low NEVER exceeds RPE 6 (prevents overload bug)
+// - quality_high capped at RPE 7 (Construction) / RPE 8 (Spécifique)
+// - RPE 9 only if weekVolume ≥ 50km
+// - SPECIFIQUE type used in Spécifique phase (filtered by distance)
+// - Varied types across phases (VMA_COURTE, VMA_LONGUE, SEUIL2, TEMPO, SPECIFIQUE)
+// - Assimilation weeks: all ≤ RPE 4, no quality sessions
 function buildSessionSlots(phase, ratio, nbSessions, isAssim, distance, weekVolume) {
   const slots = [];
 
   // Phase progression sub-phase (début/milieu/fin)
   const subPhase = ratio < 0.33 ? "début" : ratio < 0.66 ? "milieu" : "fin";
+  const targetRace = DISTANCE_TO_RACE[distance] || null;
 
   if (phase === "Base") {
     // 0 quality, 1 SL RPE 3-4, rest footings RPE 2-3
     slots.push({ role: "sl", type: "SORTIE_LONGUE", targetRPE: isAssim ? 3 : 4, volumePct: VOLUME_DISTRIBUTION.SL_PCT });
     for (let i = 1; i < nbSessions; i++) {
-      slots.push({ role: "footing", type: "FOOTING", targetRPE: isAssim ? 2 : 3, volumePct: 0 }); // auto-distributed
+      slots.push({ role: "footing", type: "FOOTING", targetRPE: isAssim ? 2 : 3, volumePct: 0 });
     }
+
   } else if (phase === "Construction") {
     if (isAssim) {
-      // Assimilation: 0 quality, max RPE 4
       slots.push({ role: "sl", type: "SORTIE_LONGUE", targetRPE: 3, volumePct: VOLUME_DISTRIBUTION.SL_PCT });
       for (let i = 1; i < nbSessions; i++) {
         slots.push({ role: "footing", type: "FOOTING", targetRPE: 3, volumePct: 0 });
       }
     } else {
-      // 1 quality + 1 SL + footings. 5+: 2nd quality
-      const qualityType = subPhase === "fin" ? "SEUIL2" : "SEUIL2";
-      const qualityRPE = subPhase === "début" ? 5 : subPhase === "milieu" ? 6 : 7;
+      // quality_high: SEUIL2 with progressive RPE (5→6→7)
+      const qualityHighType = "SEUIL2";
+      const qualityHighRPE = subPhase === "début" ? 5 : subPhase === "milieu" ? 6 : 7;
       const slRPE = subPhase === "début" ? 4 : subPhase === "milieu" ? 5 : 6;
 
-      slots.push({ role: "quality_high", type: qualityType, targetRPE: qualityRPE, volumePct: VOLUME_DISTRIBUTION.QUALITY_HIGH_PCT });
+      slots.push({ role: "quality_high", type: qualityHighType, targetRPE: qualityHighRPE, volumePct: VOLUME_DISTRIBUTION.QUALITY_HIGH_PCT });
       slots.push({ role: "sl", type: "SORTIE_LONGUE", targetRPE: slRPE, volumePct: VOLUME_DISTRIBUTION.SL_PCT });
 
+      // quality_low (5+ sessions): VMA with RPE capped at 6
       if (nbSessions >= 5) {
-        const secondType = subPhase === "début" ? "SEUIL2" : "VMA_COURTE";
-        const secondRPE = subPhase === "début" ? 5 : subPhase === "milieu" ? 5 : 6;
+        const secondType = subPhase === "fin" ? "VMA_LONGUE" : "VMA_COURTE";
+        const secondRPE = 5; // always RPE 5 — never exceeds 6
         slots.push({ role: "quality_low", type: secondType, targetRPE: secondRPE, volumePct: VOLUME_DISTRIBUTION.QUALITY_LOW_PCT });
       }
 
-      // Fill remaining with footings and recovery
+      // Fill remaining with recovery + footings
       const filled = slots.length;
       if (nbSessions >= filled + 1) {
         slots.push({ role: "recup", type: "FOOTING", targetRPE: 2, volumePct: VOLUME_DISTRIBUTION.RECUP_PCT });
@@ -86,6 +104,7 @@ function buildSessionSlots(phase, ratio, nbSessions, isAssim, distance, weekVolu
         slots.push({ role: "footing", type: "FOOTING", targetRPE: 3, volumePct: 0 });
       }
     }
+
   } else if (phase === "Spécifique") {
     if (isAssim) {
       slots.push({ role: "sl", type: "SORTIE_LONGUE", targetRPE: 3, volumePct: VOLUME_DISTRIBUTION.SL_PCT });
@@ -93,20 +112,28 @@ function buildSessionSlots(phase, ratio, nbSessions, isAssim, distance, weekVolu
         slots.push({ role: "footing", type: "FOOTING", targetRPE: 3, volumePct: 0 });
       }
     } else {
-      // 1 quality RPE 7-8, 1 SL RPE 6-8, footings. 5+: rappel RPE 5
-      const qualityType = subPhase === "début" ? "TEMPO" : "TEMPO";
-      const qualityRPE = subPhase === "début" ? 7 : subPhase === "fin" ? 8 : 7;
-      // No RPE 9 if < 40km/week
-      const clampedQualityRPE = weekVolume < 40 ? Math.min(qualityRPE, 7) : qualityRPE;
+      // quality_high: SPECIFIQUE sessions filtered by distance
+      // Falls back to TEMPO if no SPECIFIQUE match
+      const qualityHighType = targetRace ? "SPECIFIQUE" : "TEMPO";
+      const qualityHighRPE = subPhase === "début" ? 7 : 8;
+      // Cap at RPE 8 unless high volume
+      const clampedHighRPE = weekVolume < 50 ? Math.min(qualityHighRPE, 8) : qualityHighRPE;
 
-      const slRPE = subPhase === "début" ? 6 : subPhase === "fin" ? 8 : 7;
+      const slRPE = subPhase === "début" ? 6 : subPhase === "fin" ? 7 : 7;
       const clampedSlRPE = weekVolume < 40 ? Math.min(slRPE, 6) : slRPE;
 
-      slots.push({ role: "quality_high", type: qualityType, targetRPE: clampedQualityRPE, volumePct: VOLUME_DISTRIBUTION.QUALITY_HIGH_PCT });
+      slots.push({
+        role: "quality_high", type: qualityHighType, targetRPE: clampedHighRPE,
+        volumePct: VOLUME_DISTRIBUTION.QUALITY_HIGH_PCT,
+        ...(targetRace ? { targetRace } : {}),
+      });
       slots.push({ role: "sl", type: "SORTIE_LONGUE", targetRPE: clampedSlRPE, volumePct: VOLUME_DISTRIBUTION.SL_PCT });
 
+      // quality_low (5+ sessions): progressive SEUIL2→TEMPO, RPE 5→6 max
       if (nbSessions >= 5) {
-        slots.push({ role: "quality_low", type: "SEUIL2", targetRPE: 5, volumePct: VOLUME_DISTRIBUTION.QUALITY_LOW_PCT });
+        const secondType = subPhase === "début" ? "SEUIL2" : "TEMPO";
+        const secondRPE = subPhase === "fin" ? 6 : 5; // capped at 6
+        slots.push({ role: "quality_low", type: secondType, targetRPE: secondRPE, volumePct: VOLUME_DISTRIBUTION.QUALITY_LOW_PCT });
       }
 
       const filled = slots.length;
@@ -117,8 +144,8 @@ function buildSessionSlots(phase, ratio, nbSessions, isAssim, distance, weekVolu
         slots.push({ role: "footing", type: "FOOTING", targetRPE: 3, volumePct: 0 });
       }
     }
+
   } else if (phase === "Affûtage") {
-    // 0-1 rappel RPE 5, footings RPE 2-3. Last taper week: max RPE 3
     const isLastWeek = ratio >= 0.8;
 
     if (!isLastWeek && nbSessions >= 3) {
@@ -140,14 +167,19 @@ function buildSessionSlots(phase, ratio, nbSessions, isAssim, distance, weekVolu
 }
 
 // ── 2. resolveSlot ──
-// Tries selectSessionByRPE, falls back to selectSession, then hardcoded inline
-function resolveSlot(slot, phase, ratio, paces, weekInPhase, totalWeeksInPhase, targetKm) {
-  // Try RPE-based selection first
-  let entry = selectSessionByRPE(slot.type, phase, slot.targetRPE);
+// Tries selectSessionByRPE (with anti-repetition), falls back to selectSession, then hardcoded inline
+function resolveSlot(slot, phase, ratio, paces, weekInPhase, totalWeeksInPhase, targetKm, usedIds = new Set()) {
+  // Try RPE-based selection first (with anti-repetition & targetRace filter)
+  let entry = selectSessionByRPE(slot.type, phase, slot.targetRPE, usedIds, slot.targetRace || null);
 
   // Fallback to level-based selection
   if (!entry) {
     entry = selectSession(slot.type, phase, weekInPhase, totalWeeksInPhase);
+  }
+
+  // Track used ID for anti-repetition
+  if (entry && entry.id) {
+    usedIds.add(entry.id);
   }
 
   if (entry) {
@@ -342,6 +374,9 @@ export function generateWeeklyPlan(plan, availability, paces, startDate) {
     "Affûtage": "Focus fraîcheur — assimilation et récupération",
   };
 
+  // Inter-week anti-repetition: track last used session ID per type
+  const lastUsedByType = {};
+
   return volumeSchedule.map((weekData, idx) => {
     const { week, phase, volume, isAssim } = weekData;
 
@@ -357,11 +392,22 @@ export function generateWeeklyPlan(plan, availability, paces, startDate) {
     const slots = buildSessionSlots(phase, ratio, sessionsPerWeek, isAssim, distance, volume);
 
     // ── Step 2: Resolve each slot to a concrete session ──
+    // Build usedIds set: start with last week's sessions to avoid back-to-back repeats
+    const usedIds = new Set();
+    Object.values(lastUsedByType).forEach(id => { if (id) usedIds.add(id); });
+
     let sessions = slots.map(slot => {
       const targetKm = slot.volumePct > 0
         ? Math.round(volume * slot.volumePct)
         : Math.round(volume / sessionsPerWeek);
-      return resolveSlot(slot, phase, ratio, paces, weekInPhase, totalWeeksInPhase, targetKm);
+      return resolveSlot(slot, phase, ratio, paces, weekInPhase, totalWeeksInPhase, targetKm, usedIds);
+    });
+
+    // Update lastUsedByType for next week's anti-repetition
+    sessions.forEach((s, i) => {
+      if (s._sourceTemplateId && slots[i]) {
+        lastUsedByType[slots[i].type] = s._sourceTemplateId;
+      }
     });
 
     // ── Step 3: Distribute volume ──
