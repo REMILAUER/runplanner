@@ -371,41 +371,48 @@ function recalcDurations(sessions, slots, paces) {
       : (session.distance?.low || 0);
     if (distKm <= 0) return;
 
-    // Main duration from distance × pace, apply duration_factor for footings
-    let mainMin = distKm * easyPaceMinKm;
-    if (session.type === "EF" && session._durationFactor) {
-      mainMin *= session._durationFactor;
-    }
+    const steps = session._dbSteps?.filter(st => st.stepType === "main") || [];
+    const hasSegments = session.main && (session.main.length > 1 || session.main[0]?.description?.match(/^(\d+)% en /));
 
-    // EF/SL have no separate warmup/cooldown — duration IS the run
-    const totalMin = Math.round(mainMin);
+    if (hasSegments && steps.length > 0 && session.main.length === steps.length) {
+      // Multi-segment (SL or structured footing) — recalculate each segment from new distance
+      let totalSegMin = 0;
+      steps.forEach((step, si) => {
+        const fracMatch = session.main[si]?.description?.match(/^(\d+)% en (\w+)/);
+        if (fracMatch) {
+          const pct = parseInt(fracMatch[1]) / 100;
+          const zone = step.paceZone || "Easy";
+          const segKm = Math.round(distKm * pct * 10) / 10;
+          const segMin = segKm * zonePaceMinKm(zone);
+          totalSegMin += segMin;
+          session.main[si].description = `${Math.round(pct * 100)}% en ${zone.toLowerCase()} (~${segKm}km)`;
+          session.main[si].duration = `~${fmtMin(segMin)}`;
+          // Update _dbSteps durationSec for skyline consistency
+          step.durationSec = Math.round(segMin * 60);
+        }
+      });
+      // Total duration = sum of all segment durations
+      const totalMin = Math.round(totalSegMin);
+      session.duration = fmtMin(totalMin);
+      session._targetDurationMin = totalMin;
+      session._targetDistanceKm = distKm;
+    } else {
+      // Single-block session — simple distance × pace
+      let mainMin = distKm * easyPaceMinKm;
+      if (session.type === "EF" && session._durationFactor) {
+        mainMin *= session._durationFactor;
+      }
+      const totalMin = Math.round(mainMin);
+      session.duration = fmtMin(totalMin);
+      session._targetDurationMin = totalMin;
+      session._targetDistanceKm = distKm;
 
-    // Update session fields
-    session.duration = fmtMin(totalMin);
-    session._targetDurationMin = totalMin;
-    session._targetDistanceKm = distKm;
-
-    // Update main blocks — recalculate per-segment km and durations for EF and SL
-    if (session.main && session.main.length > 0) {
-      const steps = session._dbSteps?.filter(st => st.stepType === "main") || [];
-      const hasSegments = session.main.length > 1 || session.main[0]?.description?.match(/^(\d+)% en /);
-
-      if (hasSegments && steps.length > 0 && session.main.length === steps.length) {
-        // Multi-segment (SL or structured footing) — recalculate from new distance
-        steps.forEach((step, si) => {
-          const fracMatch = session.main[si]?.description?.match(/^(\d+)% en (\w+)/);
-          if (fracMatch) {
-            const pct = parseInt(fracMatch[1]) / 100;
-            const zone = step.paceZone || "Easy";
-            const segKm = Math.round(distKm * pct * 10) / 10;
-            const segMin = segKm * zonePaceMinKm(zone);
-            session.main[si].description = `${Math.round(pct * 100)}% en ${zone.toLowerCase()} (~${segKm}km)`;
-            session.main[si].duration = `~${fmtMin(segMin)}`;
-          }
-        });
-      } else if (session.main.length === 1) {
-        // Single-block footing — just update duration
-        session.main[0].duration = fmtMin(Math.round(mainMin));
+      if (session.main && session.main.length === 1) {
+        session.main[0].duration = fmtMin(totalMin);
+      }
+      // Update _dbSteps durationSec for single-block
+      if (steps.length === 1) {
+        steps[0].durationSec = totalMin * 60;
       }
     }
   });

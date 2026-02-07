@@ -1920,8 +1920,8 @@ export const SESSION_LIBRARY = {
             },
             {
               fraction: 0.5,
-              pace_zone: "Easy",
-              fartlek_detail: "6 × 3min Actif / 3min Easy",
+              pace_zone: "Actif",
+              label: "6 × 3min Actif (récup 3min Easy)",
             },
             {
               fraction: 0.25,
@@ -1979,8 +1979,8 @@ export const SESSION_LIBRARY = {
             },
             {
               fraction: 0.5,
-              pace_zone: "Easy",
-              fartlek_detail: "3 × 8min Actif / 4min Easy",
+              pace_zone: "Actif",
+              label: "3 × 8min Actif (récup 4min Easy)",
             },
             {
               fraction: 0.25,
@@ -2075,8 +2075,8 @@ export const SESSION_LIBRARY = {
             },
             {
               fraction: 0.5,
-              pace_zone: "Easy",
-              fartlek_detail: "10 × 2min Tempo / 2min Easy",
+              pace_zone: "Tempo",
+              label: "10 × 2min Tempo (récup 2min Easy)",
             },
             {
               fraction: 0.25,
@@ -2140,8 +2140,8 @@ export const SESSION_LIBRARY = {
             },
             {
               fraction: 0.5,
-              pace_zone: "Easy",
-              fartlek_detail: "3 × 12min Tempo / 4min Easy",
+              pace_zone: "Tempo",
+              label: "3 × 12min Tempo (récup 4min Easy)",
             },
             {
               fraction: 0.25,

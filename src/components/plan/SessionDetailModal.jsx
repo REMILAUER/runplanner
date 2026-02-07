@@ -344,6 +344,9 @@ function MainBlockContent({ session, sessionType }) {
 
   // ── Path B: Multiple structured steps (mixed sessions, SL segments) → uniform card per step ──
   if (steps.length > 1) {
+    // Detect if this is a segment-based session (SL/footing with fraction-based segments)
+    const isSegmentSession = session.type === "SL" || session.type === "EF";
+
     return (
       <>
         {steps.map((step, i) => {
@@ -353,11 +356,19 @@ function MainBlockContent({ session, sessionType }) {
           const recStr = fmtRecovery(step);
           const paceStr = fmtStepPace(step);
 
-          // For SL/footing segments: use session.main[i] data when step has no duration/distance
           const mainBlock = session.main?.[i];
-          const hasStructuredWork = workStr !== "—";
-          const displayLabel = hasStructuredWork ? workStr : (mainBlock?.description || step.label || "—");
-          const displaySub = hasStructuredWork ? step.description : (mainBlock ? `${mainBlock.duration} @ ${mainBlock.pace}/km` : null);
+
+          // For SL/footing segment sessions: use the label (e.g. "6 × 3min Actif") as primary
+          // and show duration + pace as secondary info
+          let displayLabel, displaySub;
+          if (isSegmentSession) {
+            displayLabel = step.label || mainBlock?.description || "—";
+            displaySub = mainBlock ? `${mainBlock.duration} @ ${mainBlock.pace}/km` : step.description;
+          } else {
+            const hasStructuredWork = workStr !== "—";
+            displayLabel = hasStructuredWork ? workStr : (mainBlock?.description || step.label || "—");
+            displaySub = hasStructuredWork ? step.description : (mainBlock ? `${mainBlock.duration} @ ${mainBlock.pace}/km` : null);
+          }
 
           return (
             <div
@@ -382,7 +393,7 @@ function MainBlockContent({ session, sessionType }) {
                 <span style={{ fontSize: 12, fontWeight: 600, color: "#333" }}>
                   {displayLabel}
                 </span>
-                {hasStructuredWork && paceStr && (
+                {!isSegmentSession && paceStr && (
                   <span style={{ fontSize: 11, color: "#888" }}>
                     @ {paceStr}/km
                   </span>

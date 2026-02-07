@@ -138,10 +138,13 @@ export function buildSessionFromLibrary(entry, targetDistanceKm, paces, sessionT
         const pct = seg.fraction || 0;
         const km = Math.round(targetDistanceKm * pct * 10) / 10;
         const min = distToMin(km, zone);
+        const label = seg.label || `${Math.round(pct * 100)}% ${zone}`;
         mainBlocks.push({
           description: `${Math.round(pct * 100)}% en ${zone.toLowerCase()} (~${km}km)`,
           duration: `~${fmtMin(min)}`,
           pace: getPaceStr(paces, zone),
+          _zone: zone,
+          _label: label,
         });
       });
     } else if (s && s.type === "duration_blocks" && Array.isArray(s.blocks)) {
@@ -152,6 +155,8 @@ export function buildSessionFromLibrary(entry, targetDistanceKm, paces, sessionT
           description: `${block.duration_min}min en ${zone.toLowerCase()}`,
           duration: fmtMin(block.duration_min),
           pace: getPaceStr(paces, zone),
+          _zone: zone,
+          _label: `${block.duration_min}min ${zone}`,
         });
       });
     } else {
@@ -162,6 +167,7 @@ export function buildSessionFromLibrary(entry, targetDistanceKm, paces, sessionT
         description: entry.description,
         duration: fmtMin(totalMin),
         pace: getPaceStr(paces, primaryZone),
+        _zone: primaryZone,
       });
     }
   }
