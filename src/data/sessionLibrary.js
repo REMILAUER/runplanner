@@ -2524,7 +2524,7 @@ export const SESSION_LIBRARY = {
         rpe: 7,
         target_race: "5km",
         intensity_hint: null,
-        zones: ["VMALongue"],
+        zones: ["VMACourte"],
         structure: {
           type: "simple",
           reps: 6,
@@ -2537,9 +2537,10 @@ export const SESSION_LIBRARY = {
         surface_pref: "plat",
         notes: "Échauffement 15min (2–3km) Easy + 4 lignes droites. Reste régulier, effort soutenu mais maîtrisé.",
         coach_tips: [
+          "Pars dans le bas de la fourchette d'allure. N'accélère que si les sensations sont bonnes en deuxième moitié.",
           "Les 2 premiers 800m doivent te sembler « faciles » pour tenir la fin.",
-          "Récupère en trot lent, sans t’arrêter.",
-          "Si tu dérives, garde la cadence et baisse légèrement l’intensité.",
+          "Récupère en trot lent, sans t'arrêter.",
+          "Si tu dérives, garde la cadence et baisse légèrement l'intensité.",
         ],
       },
       {
@@ -2548,7 +2549,7 @@ export const SESSION_LIBRARY = {
         rpe: 8,
         target_race: "5km",
         intensity_hint: null,
-        zones: ["VMALongue"],
+        zones: ["VMACourte"],
         structure: {
           type: "simple",
           reps: 10,
@@ -2561,9 +2562,10 @@ export const SESSION_LIBRARY = {
         surface_pref: "plat",
         notes: "Échauffement 15min (2–3km) Easy + éducatifs + 4 accélérations. Densité élevée : vise la tenue.",
         coach_tips: [
+          "Pars dans le bas de la fourchette d'allure. N'accélère que si les sensations sont bonnes en deuxième moitié.",
           "Reste homogène : pas de départ trop rapide.",
           "Sur les récup, trotte très lentement sans marcher.",
-          "Si tu perds la technique, réduis légèrement l’intensité plutôt que forcer.",
+          "Si tu perds la technique, réduis légèrement l'intensité plutôt que forcer.",
         ],
       },
       {
@@ -2572,7 +2574,7 @@ export const SESSION_LIBRARY = {
         rpe: 9,
         target_race: "5km",
         intensity_hint: null,
-        zones: ["VMALongue"],
+        zones: ["VMACourte"],
         structure: {
           type: "simple",
           reps: 5,
@@ -2585,6 +2587,7 @@ export const SESSION_LIBRARY = {
         surface_pref: "plat",
         notes: "Échauffement 15min (2–3km) Easy + 4 lignes droites. Simulation exigeante : régularité avant tout.",
         coach_tips: [
+          "Pars dans le bas de la fourchette d'allure. N'accélère que si les sensations sont bonnes en deuxième moitié.",
           "Le 1er km doit être contrôlé, sinon tu exploseras sur le 4e–5e.",
           "Récupère en trot lent, sans te figer.",
           "Reste gainé sur fatigue : buste haut, cadence stable.",
@@ -2596,7 +2599,7 @@ export const SESSION_LIBRARY = {
         rpe: 7,
         target_race: "10km",
         intensity_hint: null,
-        zones: ["Seuil2"],
+        zones: ["VMALongue"],
         structure: {
           type: "simple",
           reps: 5,
@@ -2609,9 +2612,10 @@ export const SESSION_LIBRARY = {
         surface_pref: "plat",
         notes: "Échauffement 15min (2–3km) Easy + 3 accélérations. Cherche une allure stable, sans dérive.",
         coach_tips: [
+          "Pars dans le bas de la fourchette d'allure. N'accélère que si les sensations sont bonnes en deuxième moitié.",
           "Reste régulier : même effort du 1er au dernier km.",
           "Sur les récup, trotte lentement et relâche les épaules.",
-          "Si tu dérives, ajuste l’intensité à la baisse dès la rep suivante.",
+          "Si tu dérives, ajuste l'intensité à la baisse dès la rep suivante.",
         ],
       },
       {
@@ -2620,7 +2624,7 @@ export const SESSION_LIBRARY = {
         rpe: 8,
         target_race: "10km",
         intensity_hint: null,
-        zones: ["Seuil2"],
+        zones: ["VMALongue"],
         structure: {
           type: "simple",
           reps: 3,
@@ -2633,9 +2637,10 @@ export const SESSION_LIBRARY = {
         surface_pref: "plat",
         notes: "Échauffement 15min (2–3km) Easy + 3 lignes droites. Séance dense : vise la tenue, pas le sprint.",
         coach_tips: [
-          "Stabilise l’allure sur les 500 premiers mètres, puis garde-la.",
-          "Récupère en trot lent, sans t’arrêter.",
-          "Si tu es trop haut, baisse légèrement l’intensité et finis propre.",
+          "Pars dans le bas de la fourchette d'allure. N'accélère que si les sensations sont bonnes en deuxième moitié.",
+          "Stabilise l'allure sur les 500 premiers mètres, puis garde-la.",
+          "Récupère en trot lent, sans t'arrêter.",
+          "Si tu es trop haut, baisse légèrement l'intensité et finis propre.",
         ],
       },
       {
@@ -2644,7 +2649,7 @@ export const SESSION_LIBRARY = {
         rpe: 9,
         target_race: "10km",
         intensity_hint: null,
-        zones: ["Seuil2"],
+        zones: ["VMALongue"],
         structure: {
           type: "simple",
           reps: 2,
@@ -2657,6 +2662,7 @@ export const SESSION_LIBRARY = {
         surface_pref: "plat",
         notes: "Échauffement 15min (2–3km) Easy + 4 accélérations. Simulation très exigeante : régularité stricte.",
         coach_tips: [
+          "Pars dans le bas de la fourchette d'allure. N'accélère que si les sensations sont bonnes en deuxième moitié.",
           "Ne pars pas au-dessus : la 2e fraction doit être tenable.",
           "Sur la récup, trotte lentement et respire profondément.",
           "Reste propre techniquement en fin : cadence stable, posture haute.",
@@ -2668,7 +2674,7 @@ export const SESSION_LIBRARY = {
         rpe: 7,
         target_race: "semi",
         intensity_hint: "high",
-        zones: ["Tempo"],
+        zones: ["Seuil2"],
         structure: {
           type: "simple",
           reps: 3,
@@ -2681,9 +2687,10 @@ export const SESSION_LIBRARY = {
         surface_pref: "plat",
         notes: "Échauffement 15min (2–3km) Easy. Allure semi (haut de zone) : stable, sans dérive vers Seuil2.",
         coach_tips: [
-          "Stabilise l’allure dès le 1er km de chaque bloc.",
+          "Pars dans le bas de la fourchette d'allure. N'accélère que si les sensations sont bonnes en deuxième moitié.",
+          "Stabilise l'allure dès le 1er km de chaque bloc.",
           "Récupère en trot lent, sans te refroidir.",
-          "Si tu dérives, baisse légèrement l’intensité et garde la continuité.",
+          "Si tu dérives, baisse légèrement l'intensité et garde la continuité.",
         ],
       },
       {
@@ -2692,7 +2699,7 @@ export const SESSION_LIBRARY = {
         rpe: 8,
         target_race: "semi",
         intensity_hint: "high",
-        zones: ["Tempo"],
+        zones: ["Seuil2"],
         structure: {
           type: "simple",
           reps: 2,
@@ -2705,6 +2712,7 @@ export const SESSION_LIBRARY = {
         surface_pref: "plat",
         notes: "Échauffement 15min (2–3km) Easy + 3 lignes droites. Densité élevée : tenue d’allure et relâchement.",
         coach_tips: [
+          "Pars dans le bas de la fourchette d'allure. N'accélère que si les sensations sont bonnes en deuxième moitié.",
           "Le 1er 6km doit te laisser de la marge pour le 2e.",
           "Sur la récup, trotte très lentement et relâche le haut du corps.",
           "Reste économique : cadence stable, pas de relances inutiles.",
@@ -2716,7 +2724,7 @@ export const SESSION_LIBRARY = {
         rpe: 9,
         target_race: "semi",
         intensity_hint: "high",
-        zones: ["Tempo"],
+        zones: ["Seuil2"],
         structure: {
           type: "simple",
           reps: 1,
@@ -2729,9 +2737,10 @@ export const SESSION_LIBRARY = {
         surface_pref: "plat",
         notes: "Échauffement 15min (2–3km) Easy. Simulation : départ contrôlé, tenue jusqu’au bout sans sprint.",
         coach_tips: [
+          "Pars dans le bas de la fourchette d'allure. N'accélère que si les sensations sont bonnes en deuxième moitié.",
           "Choisis un parcours sans interruptions.",
-          "Découpe mentalement en blocs (ex : 4 × 4km) pour gérer l’effort.",
-          "Si tu dérives, baisse légèrement l’intensité et garde la régularité.",
+          "Découpe mentalement en blocs (ex : 4 × 4km) pour gérer l'effort.",
+          "Si tu dérives, baisse légèrement l'intensité et garde la régularité.",
         ],
       },
       {
@@ -2753,6 +2762,7 @@ export const SESSION_LIBRARY = {
         surface_pref: "plat",
         notes: "Échauffement 15min (2–3km) Easy. Allure marathon (bas de zone) : confortable, stable, sans dérive.",
         coach_tips: [
+          "Pars dans le bas de la fourchette d'allure. N'accélère que si les sensations sont bonnes en deuxième moitié.",
           "Reste en contrôle : pas de tempo « trop haut ».",
           "Travaille la régularité : mêmes sensations sur les 3 blocs.",
           "Sur la récup, trotte lentement et relâche les épaules.",
@@ -2777,9 +2787,10 @@ export const SESSION_LIBRARY = {
         surface_pref: "plat",
         notes: "Échauffement 15min (2–3km) Easy + 2 accélérations. Objectif : tenue d’allure, économie de course.",
         coach_tips: [
+          "Pars dans le bas de la fourchette d'allure. N'accélère que si les sensations sont bonnes en deuxième moitié.",
           "Hydrate-toi avant et pendant si la séance est longue.",
-          "Garde une cadence stable, évite de t’asseoir sur la foulée.",
-          "Si tu dérives, baisse légèrement l’intensité et termine propre.",
+          "Garde une cadence stable, évite de t'asseoir sur la foulée.",
+          "Si tu dérives, baisse légèrement l'intensité et termine propre.",
         ],
       },
       {
@@ -2801,9 +2812,10 @@ export const SESSION_LIBRARY = {
         surface_pref: "plat",
         notes: "Échauffement 15min (2–3km) Easy. Simulation longue : départ prudent, tenue d’allure sans sprint final.",
         coach_tips: [
+          "Pars dans le bas de la fourchette d'allure. N'accélère que si les sensations sont bonnes en deuxième moitié.",
           "Planifie ravitaillement (boisson + glucides) dès le départ.",
-          "Reste strict sur l’allure : le but est la constance.",
-          "Si la fatigue monte, baisse légèrement l’intensité et garde la continuité.",
+          "Reste strict sur l'allure : le but est la constance.",
+          "Si la fatigue monte, baisse légèrement l'intensité et garde la continuité.",
         ],
       },
   ],

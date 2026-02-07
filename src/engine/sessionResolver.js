@@ -100,7 +100,11 @@ export function selectSession(sessionType, phase, weekInPhase, totalWeeksInPhase
  */
 export function buildSessionFromLibrary(entry, targetDistanceKm, paces, sessionTypeKey) {
   const type = TYPE_MAP[sessionTypeKey] || "EF";
-  const mainPaceZone = PACE_ZONE_MAP[sessionTypeKey] || "Easy";
+  // For SPECIFIQUE sessions, use the entry's own zones[0] as the pace zone
+  // (each distance has its specific pace: Marathon→Tempo, Semi→Seuil2, 10km→VMALongue, 5km→VMACourte)
+  const mainPaceZone = (sessionTypeKey === "SPECIFIQUE" && entry.zones?.[0])
+    ? entry.zones[0]
+    : (PACE_ZONE_MAP[sessionTypeKey] || "Easy");
   const easyPaceStr = getPaceStr(paces, "Easy");
   const mainPaceStr = getPaceStr(paces, mainPaceZone);
 
