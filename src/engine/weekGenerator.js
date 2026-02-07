@@ -385,19 +385,14 @@ function recalcDurations(sessions, slots, paces) {
     session._targetDurationMin = totalMin;
     session._targetDistanceKm = distKm;
 
-    // Update main block durations for EF
-    if (session.main && session.main.length > 0 && session.type === "EF") {
-      session.main[0].duration = fmtMin(Math.round(mainMin));
-    }
-
-    // Update SL main blocks — recalculate per-segment km and durations
-    if (session.type === "SL" && session.main && session.main.length > 0) {
-      // Rebuild main block descriptions with new distKm
+    // Update main blocks — recalculate per-segment km and durations for EF and SL
+    if (session.main && session.main.length > 0) {
       const steps = session._dbSteps?.filter(st => st.stepType === "main") || [];
-      if (steps.length > 0 && session.main.length === steps.length) {
-        // SL segments have fractions — recalculate from new distance
+      const hasSegments = session.main.length > 1 || session.main[0]?.description?.match(/^(\d+)% en /);
+
+      if (hasSegments && steps.length > 0 && session.main.length === steps.length) {
+        // Multi-segment (SL or structured footing) — recalculate from new distance
         steps.forEach((step, si) => {
-          // Try to extract fraction from label pattern "XX% en ..."
           const fracMatch = session.main[si]?.description?.match(/^(\d+)% en (\w+)/);
           if (fracMatch) {
             const pct = parseInt(fracMatch[1]) / 100;
@@ -408,6 +403,9 @@ function recalcDurations(sessions, slots, paces) {
             session.main[si].duration = `~${fmtMin(segMin)}`;
           }
         });
+      } else if (session.main.length === 1) {
+        // Single-block footing — just update duration
+        session.main[0].duration = fmtMin(Math.round(mainMin));
       }
     }
   });

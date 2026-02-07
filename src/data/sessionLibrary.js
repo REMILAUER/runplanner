@@ -2298,9 +2298,17 @@ export const SESSION_LIBRARY = {
         pace_zones: ["Easy", "Actif"],
         duration_factor: 1.05,
         non_easy_fraction: 0.1,
+        structure: {
+          type: "segments",
+          segments: [
+            { fraction: 0.45, pace_zone: "Easy" },
+            { fraction: 0.10, pace_zone: "Actif" },
+            { fraction: 0.45, pace_zone: "Easy" },
+          ],
+        },
         notes: "Échauffement 10min Easy, puis place une courte portion Actif sans te crisper. Retour au calme 10min Easy.",
         coach_tips: [
-          "L’Actif doit rester modéré : phrases possibles.",
+          "L'Actif doit rester modéré : phrases possibles.",
           "Accélère progressivement sur 1–2min.",
           "Si tu es fatigué, garde tout en Easy.",
         ],
@@ -2367,13 +2375,20 @@ export const SESSION_LIBRARY = {
         pace_zones: ["Easy", "Actif"],
         duration_factor: 1.1,
         non_easy_fraction: 0.1,
+        structure: {
+          type: "segments",
+          segments: [
+            { fraction: 0.30, pace_zone: "Easy" },
+            { fraction: 0.40, pace_zone: "Actif", label: "6 × 2min Actif (récup 2min Easy)" },
+            { fraction: 0.30, pace_zone: "Easy" },
+          ],
+        },
         notes: "Échauffement 10min Easy, puis enchaîne les blocs Actif avec récup Easy. Retour au calme 10min.",
         coach_tips: [
           "Les 2min Actif restent modérées, sans te crisper.",
           "Sur les récup Easy, ralentis vraiment.",
-          "Si tu es essoufflé, baisse l’intensité des blocs Actif.",
+          "Si tu es essoufflé, baisse l'intensité des blocs Actif.",
         ],
-        structure: "Footing + 6 × 2min Actif avec 2min Easy entre",
       },
       {
         id: "footing_steady_20pct_actif_5",
@@ -2384,9 +2399,17 @@ export const SESSION_LIBRARY = {
         pace_zones: ["Easy", "Actif"],
         duration_factor: 1.15,
         non_easy_fraction: 0.18,
+        structure: {
+          type: "segments",
+          segments: [
+            { fraction: 0.40, pace_zone: "Easy" },
+            { fraction: 0.20, pace_zone: "Actif", label: "Bloc Actif continu" },
+            { fraction: 0.40, pace_zone: "Easy" },
+          ],
+        },
         notes: "Échauffement 12min Easy, puis place un bloc Actif continu. Retour au calme 10min Easy.",
         coach_tips: [
-          "L’Actif doit rester durable : phrases possibles.",
+          "L'Actif doit rester durable : phrases possibles.",
           "Accélère progressivement au début du bloc.",
           "Si tu dérives, reviens en Easy 2–3min puis repars.",
         ],
@@ -2400,13 +2423,20 @@ export const SESSION_LIBRARY = {
         pace_zones: ["Easy", "Seuil1"],
         duration_factor: 1.15,
         non_easy_fraction: 0.2,
+        structure: {
+          type: "segments",
+          segments: [
+            { fraction: 0.35, pace_zone: "Easy" },
+            { fraction: 0.20, pace_zone: "Seuil1", label: "3 × 4min Seuil1 (récup 3min Easy)" },
+            { fraction: 0.45, pace_zone: "Easy" },
+          ],
+        },
         notes: "Échauffement 12min Easy, puis place 3 blocs Seuil1 avec récup Easy. Retour au calme 10min.",
         coach_tips: [
           "Seuil1 = « confortablement dur », sans basculer en Seuil2.",
           "Sur les récup Easy, relâche vraiment.",
           "Reste propre techniquement : cadence stable, buste haut.",
         ],
-        structure: "Footing + 3 × 4min Seuil1 avec 3min Easy entre",
       },
       {
         id: "footing_mixte_actif_plus_6x20s_vma_6",
@@ -2417,13 +2447,21 @@ export const SESSION_LIBRARY = {
         pace_zones: ["Easy", "Actif", "VMACourte"],
         duration_factor: 1.2,
         non_easy_fraction: 0.25,
+        structure: {
+          type: "segments",
+          segments: [
+            { fraction: 0.30, pace_zone: "Easy" },
+            { fraction: 0.30, pace_zone: "Actif", label: "20min Actif" },
+            { fraction: 0.15, pace_zone: "VMACourte", label: "6 × 20s VMA (récup 60-90s)" },
+            { fraction: 0.25, pace_zone: "Easy" },
+          ],
+        },
         notes: "Échauffement 12min Easy, puis bloc Actif et rappels courts en fin. Retour au calme 10min Easy.",
         coach_tips: [
           "Les 20s VMA sont toniques mais propres, pas des sprints.",
           "Récupère complètement entre accélérations (trot lent).",
           "Si tu es trop entamé, supprime 1–2 accélérations et garde la qualité.",
         ],
-        structure: "Footing + 20min Actif puis 6 × 20s VMACourte (récup 60–90s Easy)",
       },
       {
         id: "footing_2x12min_seuil1_6",
@@ -2434,13 +2472,20 @@ export const SESSION_LIBRARY = {
         pace_zones: ["Easy", "Seuil1"],
         duration_factor: 1.25,
         non_easy_fraction: 0.3,
+        structure: {
+          type: "segments",
+          segments: [
+            { fraction: 0.25, pace_zone: "Easy" },
+            { fraction: 0.30, pace_zone: "Seuil1", label: "2 × 12min Seuil1 (récup 5min Easy)" },
+            { fraction: 0.45, pace_zone: "Easy" },
+          ],
+        },
         notes: "Échauffement 12min Easy, puis 2 blocs Seuil1 avec récup Easy. Retour au calme 10min.",
         coach_tips: [
-          "Garde Seuil1 stable, pas d’accélération en fin de bloc.",
+          "Garde Seuil1 stable, pas d'accélération en fin de bloc.",
           "Sur les récup, trotte très lentement.",
-          "Si tu dérives, réduis légèrement l’intensité du 2e bloc.",
+          "Si tu dérives, réduis légèrement l'intensité du 2e bloc.",
         ],
-        structure: "Footing + 2 × 12min Seuil1 avec 5min Easy entre",
       },
       {
         id: "footing_fartlek_8x3min_actif_7",
@@ -2451,13 +2496,20 @@ export const SESSION_LIBRARY = {
         pace_zones: ["Easy", "Actif"],
         duration_factor: 1.3,
         non_easy_fraction: 0.38,
+        structure: {
+          type: "segments",
+          segments: [
+            { fraction: 0.20, pace_zone: "Easy" },
+            { fraction: 0.38, pace_zone: "Actif", label: "8 × 3min Actif (récup 2min Easy)" },
+            { fraction: 0.42, pace_zone: "Easy" },
+          ],
+        },
         notes: "Échauffement 12min Easy, puis enchaîne les blocs Actif avec récup Easy. Retour au calme 10min.",
         coach_tips: [
           "Reste contrôlé sur les 3 premiers blocs pour tenir la fin.",
           "Sur les récup Easy, ralentis vraiment pour repartir propre.",
-          "Si tu es trop haut, baisse légèrement l’intensité des blocs Actif.",
+          "Si tu es trop haut, baisse légèrement l'intensité des blocs Actif.",
         ],
-        structure: "Footing + 8 × 3min Actif avec 2min Easy entre",
       },
   ],
 

@@ -168,11 +168,28 @@ export function buildSessionFromLibrary(entry, targetDistanceKm, paces, sessionT
   // ── FOOTING ──
   else if (sessionTypeKey === "FOOTING") {
     const totalMin = distToMin(targetDistanceKm, "Easy");
+    const s_foot = entry.structure;
 
-    if (entry.structure && typeof entry.structure === "string") {
-      // Structured footing (rappels VMA, etc.)
+    if (s_foot && s_foot.type === "segments" && Array.isArray(s_foot.segments)) {
+      // Structured footing with multi-zone segments (Actif, Seuil1, etc.)
+      s_foot.segments.forEach((seg) => {
+        const zone = seg.pace_zone || "Easy";
+        const pct = seg.fraction || 0;
+        const km = Math.round(targetDistanceKm * pct * 10) / 10;
+        const min = distToMin(km, zone);
+        const label = seg.label || `${Math.round(pct * 100)}% ${zone}`;
+        mainBlocks.push({
+          description: `${Math.round(pct * 100)}% en ${zone.toLowerCase()} (~${km}km)`,
+          duration: `~${fmtMin(min)}`,
+          pace: getPaceStr(paces, zone),
+          _zone: zone,
+          _label: label,
+        });
+      });
+    } else if (s_foot && typeof s_foot === "string") {
+      // Legacy string structure
       mainBlocks.push({
-        description: entry.structure,
+        description: s_foot,
         duration: fmtMin(totalMin),
         pace: easyPaceStr,
       });
@@ -368,13 +385,22 @@ export function buildSessionFromLibrary(entry, targetDistanceKm, paces, sessionT
   // For SL/FOOTING with multiple zones but no structured intervals
   if (_dbSteps.filter(st => st.stepType === "main").length === 0) {
     mainBlocks.forEach((block, i) => {
+      const blockZone = block._zone || mainPaceZone;
+      const blockPaceData = paces?.[blockZone];
+      // Estimate durationSec for skyline proportionality
+      let estDurSec = null;
+      const durMatch = block.duration?.match(/~?(\d+)min/);
+      const durMatchH = block.duration?.match(/~?(\d+)h(\d+)/);
+      if (durMatchH) estDurSec = (parseInt(durMatchH[1]) * 60 + parseInt(durMatchH[2])) * 60;
+      else if (durMatch) estDurSec = parseInt(durMatch[1]) * 60;
       _dbSteps.push({
         sortOrder: stepOrder++,
         stepType: "main",
-        paceZone: mainPaceZone,
-        paceMinSecKm: mainPaceData?.fast || null,
-        paceMaxSecKm: mainPaceData?.slow || null,
-        label: block.description,
+        durationSec: estDurSec,
+        paceZone: blockZone,
+        paceMinSecKm: blockPaceData?.fast || mainPaceData?.fast || null,
+        paceMaxSecKm: blockPaceData?.slow || mainPaceData?.slow || null,
+        label: block._label || block.description,
         description: `${block.duration} @ ${block.pace}`,
       });
     });
