@@ -50,6 +50,14 @@ export const DISTANCE_MIN_CEILING = { "5km": 40, "10km": 40, "Semi Marathon": 45
 // Max SL distance per target race
 export const SL_MAX_KM = { "5km": 22, "10km": 22, "Semi Marathon": 30, "Marathon": 36 };
 
+// Max SL duration (minutes) per phase × distance
+export const SL_MAX_DURATION_MIN = {
+  Base:         { "5km": 60, "10km": 60,  "Semi Marathon": 65,  "Marathon": 75  },
+  Construction: { "5km": 70, "10km": 75,  "Semi Marathon": 90,  "Marathon": 90  },
+  "Spécifique": { "5km": 70, "10km": 90,  "Semi Marathon": 100, "Marathon": 150 },
+  "Affûtage":   { "5km": 50, "10km": 60,  "Semi Marathon": 70,  "Marathon": 90  },
+};
+
 // Tiered cap factors: how much above reference volume we allow
 export const VOLUME_CAP_FACTORS = [
   { threshold: 30,       factor: 1.00 },

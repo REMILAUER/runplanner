@@ -1,6 +1,6 @@
 import { selectSession, selectSessionByRPE, buildSessionFromLibrary } from './sessionResolver';
 import { formatPace } from './vdot';
-import { PHASE_COLORS, SESSION_TYPES, DAYS_LIST, SL_MAX_KM, VOLUME_DISTRIBUTION } from '../data/constants';
+import { PHASE_COLORS, SESSION_TYPES, DAYS_LIST, SL_MAX_KM, SL_MAX_DURATION_MIN, VOLUME_DISTRIBUTION } from '../data/constants';
 import { FONT } from '../styles/tokens';
 
 // ── Shared components ───────────────────────────────────────────────
@@ -66,18 +66,37 @@ function buildSessionSlots(phase, ratio, nbSessions, isAssim, distance, weekVolu
   const subPhase = ratio < 0.33 ? "début" : ratio < 0.66 ? "milieu" : "fin";
   const targetRace = DISTANCE_TO_RACE[distance] || null;
 
+  // Helper: alternate footing length (short/long) for variety
+  let footingIdx = 0;
+  function nextFootingSlot(rpe) {
+    const isLong = footingIdx % 2 === 0; // first footing = long, second = short, etc.
+    footingIdx++;
+    return {
+      role: "footing", type: "FOOTING", targetRPE: rpe, volumePct: 0,
+      footingLength: isLong ? "long" : "short",
+    };
+  }
+
   if (phase === "Base") {
-    // 0 quality, 1 SL RPE 3-4, rest footings RPE 2-3
+    // 1 SL RPE 3-4, rest footings RPE 2-3
+    // From week 2+ (ratio > 0): introduce 1 VMA courte quality session (RPE 5→6)
     slots.push({ role: "sl", type: "SORTIE_LONGUE", targetRPE: isAssim ? 3 : 4, volumePct: VOLUME_DISTRIBUTION.SL_PCT });
-    for (let i = 1; i < nbSessions; i++) {
-      slots.push({ role: "footing", type: "FOOTING", targetRPE: isAssim ? 2 : 3, volumePct: 0 });
+
+    const introduceVMA = !isAssim && ratio > 0 && nbSessions >= 3;
+    if (introduceVMA) {
+      const vmaRPE = ratio < 0.5 ? 5 : 6;
+      slots.push({ role: "quality_low", type: "VMA_COURTE", targetRPE: vmaRPE, volumePct: VOLUME_DISTRIBUTION.QUALITY_LOW_PCT });
+    }
+
+    while (slots.length < nbSessions) {
+      slots.push(nextFootingSlot(isAssim ? 2 : 3));
     }
 
   } else if (phase === "Construction") {
     if (isAssim) {
       slots.push({ role: "sl", type: "SORTIE_LONGUE", targetRPE: 3, volumePct: VOLUME_DISTRIBUTION.SL_PCT });
       for (let i = 1; i < nbSessions; i++) {
-        slots.push({ role: "footing", type: "FOOTING", targetRPE: 3, volumePct: 0 });
+        slots.push(nextFootingSlot(3));
       }
     } else {
       // quality_high: SEUIL2 with progressive RPE (5→6→7)
@@ -101,7 +120,7 @@ function buildSessionSlots(phase, ratio, nbSessions, isAssim, distance, weekVolu
         slots.push({ role: "recup", type: "FOOTING", targetRPE: 2, volumePct: VOLUME_DISTRIBUTION.RECUP_PCT });
       }
       while (slots.length < nbSessions) {
-        slots.push({ role: "footing", type: "FOOTING", targetRPE: 3, volumePct: 0 });
+        slots.push(nextFootingSlot(3));
       }
     }
 
@@ -109,7 +128,7 @@ function buildSessionSlots(phase, ratio, nbSessions, isAssim, distance, weekVolu
     if (isAssim) {
       slots.push({ role: "sl", type: "SORTIE_LONGUE", targetRPE: 3, volumePct: VOLUME_DISTRIBUTION.SL_PCT });
       for (let i = 1; i < nbSessions; i++) {
-        slots.push({ role: "footing", type: "FOOTING", targetRPE: 3, volumePct: 0 });
+        slots.push(nextFootingSlot(3));
       }
     } else {
       // quality_high: SPECIFIQUE sessions filtered by distance
@@ -141,7 +160,7 @@ function buildSessionSlots(phase, ratio, nbSessions, isAssim, distance, weekVolu
         slots.push({ role: "recup", type: "FOOTING", targetRPE: 2, volumePct: VOLUME_DISTRIBUTION.RECUP_PCT });
       }
       while (slots.length < nbSessions) {
-        slots.push({ role: "footing", type: "FOOTING", targetRPE: 3, volumePct: 0 });
+        slots.push(nextFootingSlot(3));
       }
     }
 
@@ -158,7 +177,7 @@ function buildSessionSlots(phase, ratio, nbSessions, isAssim, distance, weekVolu
       if (slots.length === 0 || slots.every(s => s.role !== "sl")) {
         slots.push({ role: "sl", type: "SORTIE_LONGUE", targetRPE: 3, volumePct: VOLUME_DISTRIBUTION.SL_PCT });
       } else {
-        slots.push({ role: "footing", type: "FOOTING", targetRPE: rpe, volumePct: 0 });
+        slots.push(nextFootingSlot(rpe));
       }
     }
   }
@@ -274,14 +293,48 @@ function distributeVolume(sessions, slots, weekVolume, distance) {
     }
   });
 
-  // Distribute remaining km evenly across footings
+  // Distribute remaining km across footings with weighting (long ×1.6, short ×1.0)
   const remaining = Math.max(0, weekVolume - allocated);
   if (footingIndices.length > 0) {
-    const perFooting = Math.round(remaining / footingIndices.length);
-    footingIndices.forEach(i => {
-      sessions[i].distance = Math.max(1, perFooting);
+    const weights = footingIndices.map(i => {
+      const fl = slots[i]?.footingLength;
+      return fl === "long" ? 1.6 : 1.0;
+    });
+    const totalWeight = weights.reduce((a, b) => a + b, 0);
+    footingIndices.forEach((fi, wi) => {
+      const share = (weights[wi] / totalWeight) * remaining;
+      sessions[fi].distance = Math.max(1, Math.round(share));
     });
   }
+}
+
+// ── 3b. capSlDuration ──
+// Caps the SL distance so its estimated duration stays within the phase limit.
+// Uses an average easy pace (~5.5min/km fallback) or paces object if available.
+function capSlDuration(sessions, slots, phase, distance, paces) {
+  const maxDurMin = SL_MAX_DURATION_MIN?.[phase]?.[distance];
+  if (!maxDurMin) return;
+
+  sessions.forEach((session, i) => {
+    const slot = slots[i];
+    if (!slot || slot.role !== "sl") return;
+
+    // Estimate pace in min/km for Easy zone
+    let paceMinPerKm = 5.5; // fallback
+    if (paces?.Easy) {
+      paceMinPerKm = ((paces.Easy.slow + paces.Easy.fast) / 2) / 60;
+    }
+
+    const distKm = typeof session.distance === "number"
+      ? session.distance
+      : (session.distance?.low || 0);
+    const estDurMin = distKm * paceMinPerKm;
+
+    if (estDurMin > maxDurMin) {
+      const cappedKm = Math.round(maxDurMin / paceMinPerKm);
+      session.distance = cappedKm;
+    }
+  });
 }
 
 // ── 4. assignToDays ──
@@ -412,6 +465,9 @@ export function generateWeeklyPlan(plan, availability, paces, startDate) {
 
     // ── Step 3: Distribute volume ──
     distributeVolume(sessions, slots, volume, distance);
+
+    // ── Step 3b: Cap SL duration ──
+    capSlDuration(sessions, slots, phase, distance, paces);
 
     // ── Step 4: Assign to days ──
     const daySlots = assignToDays(sessions, slots, trainingDays);

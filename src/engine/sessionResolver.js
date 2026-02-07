@@ -117,6 +117,14 @@ export function buildSessionFromLibrary(entry, targetDistanceKm, paces, sessionT
     return `${min}min`;
   }
 
+  // ── Helper: adaptive warmup/cooldown based on main duration ──
+  function computeWarmupCooldown(mainMin) {
+    if (mainMin <= 20) return { warmupMin: 12, cooldownMin: 8 };
+    if (mainMin <= 40) return { warmupMin: 15, cooldownMin: 10 };
+    if (mainMin <= 60) return { warmupMin: 18, cooldownMin: 10 };
+    return { warmupMin: 20, cooldownMin: 12 };
+  }
+
   // Build main blocks from library entry
   const mainBlocks = [];
 
@@ -209,22 +217,26 @@ export function buildSessionFromLibrary(entry, targetDistanceKm, paces, sessionT
     }
   }
 
-  // Compute warmup/cooldown based on session type
+  // Compute warmup/cooldown based on session type and main duration
   const isEasySession = type === "EF" || type === "SL" || type === "RECUP";
   const hasWarmup = !isEasySession || entry.includes;
 
+  // Compute main duration first, then derive adaptive warmup/cooldown
+  const mainMin = estimateMainDuration(entry, targetDistanceKm, paces, sessionTypeKey);
+  const adaptive = computeWarmupCooldown(mainMin);
+
+  const warmupMin = hasWarmup ? adaptive.warmupMin : 0;
+  const cooldownMin = hasWarmup ? adaptive.cooldownMin : 5;
+
   const warmup = hasWarmup
-    ? { duration: "15min", pace: easyPaceStr, description: "Footing progressif + gammes" }
+    ? { duration: `${warmupMin}min`, pace: easyPaceStr, description: "Footing progressif + gammes" }
     : { duration: "—", pace: "—", description: "—" };
 
   const cooldown = hasWarmup
-    ? { duration: "10min", pace: easyPaceStr, description: "Retour au calme" }
+    ? { duration: `${cooldownMin}min`, pace: easyPaceStr, description: "Retour au calme" }
     : { duration: "5min", pace: easyPaceStr, description: "Marche + étirements" };
 
   // Compute total duration estimate
-  const warmupMin = hasWarmup ? 15 : 0;
-  const cooldownMin = hasWarmup ? 10 : 5;
-  const mainMin = estimateMainDuration(entry, targetDistanceKm, paces, sessionTypeKey);
   const totalMin = warmupMin + mainMin + cooldownMin;
   const totalRounded = Math.round(totalMin);
   const durationStr = totalRounded > 60
@@ -329,11 +341,18 @@ export function buildSessionFromLibrary(entry, targetDistanceKm, paces, sessionT
     }
     // Simple reps (10 × 400m, 3 × 10min, etc.)
     else if (s.reps) {
+      // If distance-based without duration, estimate durationSec from pace
+      let estDurationSec = s.duration_sec || s.work_sec || null;
+      if (!estDurationSec && s.distance_m && mainPaceData) {
+        const midPace = (mainPaceData.slow + mainPaceData.fast) / 2; // sec/km
+        estDurationSec = Math.round((s.distance_m / 1000) * midPace);
+      }
+
       _dbSteps.push({
         sortOrder: stepOrder++,
         stepType: "main",
         reps: s.reps,
-        durationSec: s.duration_sec || s.work_sec || null,
+        durationSec: estDurationSec,
         distanceM: s.distance_m || null,
         paceZone: mainPaceZone,
         paceMinSecKm: mainPaceData?.fast || null,
@@ -405,9 +424,11 @@ function buildDurationStr(entry) {
   }
 
   // Sets format (2 × (6 × 300m))
-  if (s.sets && s.reps_per_set && s.duration_sec) {
+  if (s.sets && s.reps_per_set && (s.duration_sec || s.distance_m)) {
     const totalReps = s.sets * s.reps_per_set;
-    const effort = totalReps * s.duration_sec;
+    // If distance-based, estimate duration from distance (~18s/100m fallback)
+    const durPerRep = s.duration_sec || (s.distance_m ? (s.distance_m / 100) * 18 : 60);
+    const effort = totalReps * durPerRep;
     const intra = (s.reps_per_set - 1) * (s.recovery_intra_sec || 60) * s.sets;
     const inter = (s.sets - 1) * (s.recovery_inter_sec || 180);
     return `${Math.round((effort + intra + inter) / 60)}min`;
@@ -419,6 +440,12 @@ function buildDurationStr(entry) {
     const effort = s.reps * dur;
     const recov = (s.reps - 1) * (s.recovery_sec || 60);
     return `${Math.round((effort + recov) / 60)}min`;
+  }
+
+  // Distance-based reps without duration (3 × 5km etc.) — needs pace to estimate
+  // Returns placeholder; actual duration computed by estimateMainDuration
+  if (s.reps && s.distance_m && !s.duration_sec && !s.work_sec) {
+    return `${s.reps} × ${s.distance_m >= 1000 ? `${(s.distance_m / 1000).toFixed(s.distance_m % 1000 === 0 ? 0 : 1)}km` : `${s.distance_m}m`}`;
   }
 
   // Pyramid with distances
@@ -611,6 +638,23 @@ function estimateMainDuration(entry, targetDistanceKm, paces, sessionTypeKey) {
   if (s.reps && s.reps > 1 && s.duration_sec) {
     const effort = s.reps * s.duration_sec;
     const recov = (s.reps - 1) * (s.recovery_sec || 60);
+    return (effort + recov) / 60;
+  }
+
+  // Distance-based reps without duration (3 × 5km etc.) — use pace to estimate
+  if (s.reps && s.distance_m && !s.duration_sec) {
+    const mainPaceZone = PACE_ZONE_MAP[sessionTypeKey] || "Easy";
+    const pd = paces?.[mainPaceZone];
+    if (pd) {
+      const midPace = (pd.slow + pd.fast) / 2; // sec/km
+      const effortPerRep = (s.distance_m / 1000) * midPace; // seconds
+      const effort = s.reps * effortPerRep;
+      const recov = (s.reps - 1) * (s.recovery_sec || 180);
+      return (effort + recov) / 60;
+    }
+    // Fallback: rough estimate ~5min/km
+    const effort = s.reps * (s.distance_m / 1000) * 300;
+    const recov = (s.reps - 1) * (s.recovery_sec || 180);
     return (effort + recov) / 60;
   }
 

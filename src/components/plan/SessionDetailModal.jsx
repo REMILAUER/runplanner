@@ -65,9 +65,20 @@ function buildSkylineSegments(session) {
         }
       }
     } else {
-      // Single block (warmup, cooldown, continuous effort, or single rep)
+      // Single block (warmup, cooldown, continuous effort, single rep, or mixed segment)
       const dur = step.durationSec || 300; // fallback 5min
-      segments.push({ dur, height, color, type: step.stepType, zone });
+      segments.push({ dur, height, color, type: step.stepType === "main" ? "work" : step.stepType, zone });
+
+      // If this main step has recovery (e.g., mixed segment), add recovery bar
+      if (step.stepType === "main" && step.recoveryDurationSec && step.recoveryDurationSec > 0) {
+        segments.push({
+          dur: step.recoveryDurationSec,
+          height: 0.15,
+          color: "#d0d0d0",
+          type: "recovery",
+          zone: null,
+        });
+      }
     }
   }
 
@@ -210,29 +221,64 @@ function ZoneBadge({ zone }) {
   );
 }
 
-// ── Main block renderer — handles repeat bracket notation ──
+// ── Helper: format duration/distance for step display ──
+function fmtStepWork(step) {
+  if (step.distanceM && !step.durationSec) {
+    return step.distanceM >= 1000
+      ? `${(step.distanceM / 1000).toFixed(step.distanceM % 1000 === 0 ? 0 : 1)}km`
+      : `${step.distanceM}m`;
+  }
+  if (step.durationSec) {
+    return step.durationSec >= 60
+      ? `${Math.round(step.durationSec / 60)}min`
+      : `${step.durationSec}s`;
+  }
+  if (step.distanceM) {
+    return step.distanceM >= 1000
+      ? `${(step.distanceM / 1000).toFixed(step.distanceM % 1000 === 0 ? 0 : 1)}km`
+      : `${step.distanceM}m`;
+  }
+  return "—";
+}
+
+function fmtRecovery(step) {
+  if (!step.recoveryDurationSec) return null;
+  const dur = step.recoveryDurationSec >= 60
+    ? `${Math.round(step.recoveryDurationSec / 60)}min`
+    : `${step.recoveryDurationSec}s`;
+  return `${dur} ${step.recoveryType || "trot"}`;
+}
+
+// ── Format pace from step data ──
+function fmtStepPace(step) {
+  if (step.paceMinSecKm && step.paceMaxSecKm) {
+    const fmtP = (s) => {
+      const m = Math.floor(s / 60);
+      const sec = Math.round(s % 60);
+      return `${m}:${sec.toString().padStart(2, "0")}`;
+    };
+    return `${fmtP(step.paceMinSecKm)}-${fmtP(step.paceMaxSecKm)}`;
+  }
+  return null;
+}
+
+// ── Main block renderer — uniform card style from _dbSteps ──
 function MainBlockContent({ session, sessionType }) {
   const steps = session._dbSteps?.filter(st => st.stepType === "main") || [];
 
-  // If we have structured _dbSteps with reps, use compact repeat notation
+  // ── Path A: Single step with reps > 1 → repeat bracket notation ──
   if (steps.length === 1 && steps[0].reps && steps[0].reps > 1) {
     const step = steps[0];
     const zone = step.paceZone || "Easy";
     const borderColor = zoneColor(zone);
 
-    // Format work duration
-    const workStr = step.durationSec
-      ? (step.durationSec >= 60 ? `${Math.round(step.durationSec / 60)}min` : `${step.durationSec}s`)
-      : (step.distanceM ? `${step.distanceM}m` : "—");
-
-    // Format recovery
-    const recStr = step.recoveryDurationSec
-      ? (step.recoveryDurationSec >= 60 ? `${Math.round(step.recoveryDurationSec / 60)}min` : `${step.recoveryDurationSec}s`)
-      : "—";
+    const workStr = fmtStepWork(step);
+    const recStr = fmtRecovery(step);
+    const paceStr = fmtStepPace(step);
 
     // Sets notation
     const setsPrefix = step.sets && step.sets > 1 ? `${step.sets} × ` : "";
-    const repsCount = step.sets ? step.reps : step.reps;
+    const repsCount = step.reps;
 
     return (
       <div style={{
@@ -267,36 +313,107 @@ function MainBlockContent({ session, sessionType }) {
           <span style={{ fontSize: 12, fontWeight: 600, color: "#333" }}>
             {workStr}
           </span>
-          <span style={{ fontSize: 11, color: "#888" }}>
-            @ {session.main?.[0]?.pace || "—"}/km
-          </span>
+          {paceStr && (
+            <span style={{ fontSize: 11, color: "#888" }}>
+              @ {paceStr}/km
+            </span>
+          )}
           <ZoneBadge zone={zone} />
         </div>
 
         {/* Recovery line */}
-        <div style={{ padding: "4px 10px 8px", display: "flex", alignItems: "center", gap: 8 }}>
-          <span style={{
-            width: 8, height: 8, borderRadius: "50%",
-            background: "#d0d0d0", display: "inline-block", flexShrink: 0,
-          }} />
-          <span style={{ fontSize: 12, color: "#888" }}>
-            récup {recStr} {step.recoveryType || "trot"}
-          </span>
-          {step.recoveryBetweenSetsSec && step.sets > 1 && (
-            <span style={{ fontSize: 11, color: "#aaa" }}>
-              · {Math.round(step.recoveryBetweenSetsSec / 60)}min entre séries
+        {recStr && (
+          <div style={{ padding: "4px 10px 8px", display: "flex", alignItems: "center", gap: 8 }}>
+            <span style={{
+              width: 8, height: 8, borderRadius: "50%",
+              background: "#d0d0d0", display: "inline-block", flexShrink: 0,
+            }} />
+            <span style={{ fontSize: 12, color: "#888" }}>
+              récup {recStr}
             </span>
-          )}
-        </div>
+            {step.recoveryBetweenSetsSec && step.sets > 1 && (
+              <span style={{ fontSize: 11, color: "#aaa" }}>
+                · {Math.round(step.recoveryBetweenSetsSec / 60)}min entre séries
+              </span>
+            )}
+          </div>
+        )}
       </div>
     );
   }
 
-  // Fallback: render each main block as a card (for SL, footing, mixed, etc.)
+  // ── Path B: Multiple structured steps (mixed sessions) → uniform card per step ──
+  if (steps.length > 1) {
+    return (
+      <>
+        {steps.map((step, i) => {
+          const zone = step.paceZone || "Easy";
+          const borderColor = zoneColor(zone);
+          const workStr = fmtStepWork(step);
+          const recStr = fmtRecovery(step);
+          const paceStr = fmtStepPace(step);
+
+          return (
+            <div
+              key={i}
+              style={{
+                background: "#fff", borderRadius: 2,
+                marginBottom: 6,
+                border: "1px solid #eee",
+                borderLeftWidth: 3,
+                borderLeftColor: borderColor,
+                overflow: "hidden",
+              }}
+            >
+              {/* Segment header */}
+              <div style={{
+                padding: "6px 10px", display: "flex", alignItems: "center", gap: 8,
+              }}>
+                <span style={{
+                  width: 8, height: 8, borderRadius: "50%",
+                  background: borderColor, display: "inline-block", flexShrink: 0,
+                }} />
+                <span style={{ fontSize: 12, fontWeight: 600, color: "#333" }}>
+                  {workStr}
+                </span>
+                {paceStr && (
+                  <span style={{ fontSize: 11, color: "#888" }}>
+                    @ {paceStr}/km
+                  </span>
+                )}
+                <ZoneBadge zone={zone} />
+              </div>
+              {step.description && (
+                <div style={{ padding: "0 10px 4px 26px", fontSize: 11, color: "#888" }}>
+                  {step.description}
+                </div>
+              )}
+              {/* Recovery line */}
+              {recStr && (
+                <div style={{
+                  padding: "2px 10px 6px", display: "flex", alignItems: "center", gap: 8,
+                  borderTop: "1px dashed #f0f0f0",
+                }}>
+                  <span style={{
+                    width: 6, height: 6, borderRadius: "50%",
+                    background: "#d0d0d0", display: "inline-block", flexShrink: 0, marginLeft: 1,
+                  }} />
+                  <span style={{ fontSize: 11, color: "#aaa" }}>
+                    récup {recStr}
+                  </span>
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </>
+    );
+  }
+
+  // ── Path C: Fallback — render from session.main blocks (SL, footing, etc.) ──
   return (
     <>
       {session.main.map((block, i) => {
-        // Try to find matching step for zone color
         const matchStep = steps[i] || steps[0];
         const zone = matchStep?.paceZone || "Easy";
         const borderColor = matchStep?.stepType === "main" ? zoneColor(zone) : sessionType.color;
